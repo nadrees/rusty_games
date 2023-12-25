@@ -1,1 +1,3 @@
-pub mod vulkan_wrappers;
+mod vulkan;
+
+pub use crate::vulkan::VkInstanceGuard;
