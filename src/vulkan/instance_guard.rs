@@ -9,11 +9,14 @@ use ash::{
 use crate::vulkan::extensions_registry::{self, DebugUtilsGuard};
 use crate::vulkan::layers_registry;
 
+use super::{logical_device::LogicalDevice, physical_device_manager::PhysicalDevice};
+
 const API_VERSION: u32 = API_VERSION_1_3;
 
 /// Simple warpper around Instance to ensure expected Vulkan calls are made, especially cleanup on drop
 pub struct VkInstanceGuard {
-    instance: Instance,
+    pub instance: Instance,
+    logical_devices: Vec<LogicalDevice>,
 }
 
 impl VkInstanceGuard {
@@ -64,16 +67,29 @@ impl VkInstanceGuard {
 
         extensions_registry::create_extensions(entry, &instance)?;
 
-        Ok(Self { instance })
+        Ok(Self {
+            instance,
+            logical_devices: vec![],
+        })
     }
 
-    pub fn get_instance<'a>(&'a self) -> &'a Instance {
-        &self.instance
+    /// Creates a logical device for interfacing with the selected physical device. Will automatically track the logical device
+    /// and destroy it when this instance is dropped.
+    pub fn create_logical_device(
+        &mut self,
+        physical_device: &PhysicalDevice,
+    ) -> Result<&LogicalDevice> {
+        let logical_device = LogicalDevice::try_new(&self, physical_device)?;
+        self.logical_devices.push(logical_device);
+        Ok(&self.logical_devices[self.logical_devices.len() - 1])
     }
 }
 
 impl Drop for VkInstanceGuard {
     fn drop(&mut self) {
+        // need to clear collections so that their destructors can run before the rest of this one does
+        self.logical_devices.clear();
+        // destroy self
         unsafe { self.instance.destroy_instance(None) }
     }
 }

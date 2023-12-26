@@ -1,3 +1,3 @@
 mod vulkan;
 
-pub use crate::vulkan::VkInstanceGuard;
+pub use crate::vulkan::*;

@@ -8,8 +8,10 @@ use ash::{Entry, Instance};
 #[cfg(debug_assertions)]
 pub use crate::vulkan::extensions_registry::debug_utils_guard::DebugUtilsGuard;
 
+/// Public trait used as a marker interface so we can return multiple extensions generically
 pub trait Extension {}
 
+/// Internal trait all extensions are expected to implement
 trait ExtensionImpl: Extension {
     fn name() -> String;
     fn try_new(entry: &Entry, instance: &Instance) -> Result<Self>
