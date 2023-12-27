@@ -5,11 +5,15 @@ use ash::{
     vk::{make_api_version, ApplicationInfo, InstanceCreateInfo, API_VERSION_1_3},
     Entry, Instance,
 };
+use glfw::PWindow;
 
 use crate::vulkan::extensions_registry::{self, DebugUtilsGuard};
 use crate::vulkan::layers_registry;
 
-use super::{logical_device::LogicalDevice, physical_device_manager::PhysicalDevice};
+use super::{
+    logical_device::LogicalDevice, physical_device_manager::PhysicalDevice,
+    surface_guard::SurfaceGuard,
+};
 
 const API_VERSION: u32 = API_VERSION_1_3;
 
@@ -17,10 +21,15 @@ const API_VERSION: u32 = API_VERSION_1_3;
 pub struct VkInstanceGuard {
     pub instance: Instance,
     logical_devices: Vec<LogicalDevice>,
+    surface: Option<SurfaceGuard>,
 }
 
 impl VkInstanceGuard {
-    pub fn try_new(entry: &Entry) -> Result<Self> {
+    pub fn try_new(
+        entry: &Entry,
+        window: &PWindow,
+        additional_extensions: Option<Vec<String>>,
+    ) -> Result<Self> {
         let appname = CString::new(env!("CARGO_PKG_NAME")).unwrap();
 
         let version_major = env!("CARGO_PKG_VERSION_MAJOR").parse::<u32>().unwrap();
@@ -44,7 +53,11 @@ impl VkInstanceGuard {
             .map(|layer| layer.as_ptr())
             .collect::<Vec<_>>();
 
-        let extensions: Vec<CString> = extensions_registry::get_names()
+        let mut extensions: Vec<String> = extensions_registry::get_names();
+        if let Some(additional_extensions) = additional_extensions {
+            extensions.append(additional_extensions.clone().as_mut());
+        }
+        let extensions = extensions
             .into_iter()
             .map(|extension| CString::new(extension))
             .collect::<Result<Vec<_>, _>>()?;
@@ -67,9 +80,12 @@ impl VkInstanceGuard {
 
         extensions_registry::create_extensions(entry, &instance)?;
 
+        let surface = SurfaceGuard::try_new(entry, &instance, window)?;
+
         Ok(Self {
             instance,
             logical_devices: vec![],
+            surface: Some(surface),
         })
     }
 
@@ -89,6 +105,8 @@ impl Drop for VkInstanceGuard {
     fn drop(&mut self) {
         // need to clear collections so that their destructors can run before the rest of this one does
         self.logical_devices.clear();
+        // clear fields
+        self.surface = None;
         // destroy self
         unsafe { self.instance.destroy_instance(None) }
     }
