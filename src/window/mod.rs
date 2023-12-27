@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Ok, Result};
 use glfw::{fail_on_errors, Action, Context, Glfw, GlfwReceiver, Key, PWindow, WindowEvent};
+use tracing::debug;
 
 pub struct WindowManager {
     glfw: Glfw,
@@ -29,7 +30,7 @@ impl WindowManager {
             self.window.swap_buffers();
             self.glfw.wait_events();
             for (_, event) in glfw::flush_messages(&self.receiver) {
-                println!("{:?}", event);
+                debug!(message = format!("Event = {:?}", event));
                 match event {
                     glfw::WindowEvent::Key(Key::Escape, _, Action::Press, _) => {
                         self.window.set_should_close(true);

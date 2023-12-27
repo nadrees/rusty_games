@@ -1,6 +1,8 @@
-use rusty_games::{VulkanManager, WindowManager};
+use rusty_games::{init_logging, VulkanManager, WindowManager};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    init_logging()?;
+
     let vulkan_manager = VulkanManager::try_new()?;
     let mut window_manager = WindowManager::try_new()?;
 

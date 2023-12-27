@@ -7,6 +7,7 @@ use ash::{
     },
     Entry, Instance,
 };
+use tracing::{event, Level};
 
 use super::ExtensionImpl;
 
@@ -68,10 +69,30 @@ unsafe extern "system" fn vulkan_debug_utils_callback(
     p_callback_data: *const DebugUtilsMessengerCallbackDataEXT,
     _p_user_data: *mut std::ffi::c_void,
 ) -> Bool32 {
-    let message = std::ffi::CStr::from_ptr((*p_callback_data).p_message);
-    let severity = format!("{:?}", message_severity).to_lowercase();
+    let message = format!(
+        "{:?}",
+        std::ffi::CStr::from_ptr((*p_callback_data).p_message)
+    );
     let ty = format!("{:?}", message_type).to_lowercase();
-    println!("[{}][{}] {:?}", severity, ty, message);
+
+    match message_severity {
+        DebugUtilsMessageSeverityFlagsEXT::VERBOSE => {
+            event!(Level::TRACE, message = message, ty = ty)
+        }
+        DebugUtilsMessageSeverityFlagsEXT::INFO => {
+            event!(Level::INFO, message = message, ty = ty)
+        }
+        DebugUtilsMessageSeverityFlagsEXT::WARNING => {
+            event!(Level::WARN, message = message, ty = ty)
+        }
+        DebugUtilsMessageSeverityFlagsEXT::ERROR => {
+            event!(Level::ERROR, message = message, ty = ty)
+        }
+        _ => panic!(
+            "Unknown message severity in vulkan_debug_utils_callback! {:?}",
+            message_severity
+        ),
+    }
     // dont skip driver
     ash::vk::FALSE
 }
