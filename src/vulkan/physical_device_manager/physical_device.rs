@@ -1,6 +1,6 @@
 use ash::vk::{PhysicalDeviceProperties, QueueFamilyProperties, QueueFlags};
 
-use crate::VkInstanceGuard;
+use crate::vulkan::VkInstanceGuard;
 
 pub struct PhysicalDevice {
     pub physical_device: ash::vk::PhysicalDevice,

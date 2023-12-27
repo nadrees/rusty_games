@@ -2,7 +2,7 @@ mod physical_device;
 
 use ash::vk::{PhysicalDeviceType, QueueFlags};
 
-use crate::VkInstanceGuard;
+use crate::vulkan::VkInstanceGuard;
 
 pub use self::physical_device::PhysicalDevice;
 

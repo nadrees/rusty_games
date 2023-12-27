@@ -1,11 +1,10 @@
-use ash::Entry;
-use rusty_games::{PhysicalDeviceManager, VkInstanceGuard};
+use rusty_games::{VulkanManager, WindowManager};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let entry = Entry::linked();
-    let mut instance = VkInstanceGuard::try_new(&entry)?;
-    let physical_device_manager = PhysicalDeviceManager::new(&instance);
-    let physical_devices = physical_device_manager.query_physical_devices()?;
-    let logical_device = instance.create_logical_device(physical_devices.first().unwrap())?;
+    let vulkan_manager = VulkanManager::try_new()?;
+    let mut window_manager = WindowManager::try_new()?;
+
+    window_manager.run_event_loop();
+
     Ok(())
 }

@@ -3,7 +3,7 @@ use ash::{
     Device,
 };
 
-use crate::VkInstanceGuard;
+use crate::vulkan::VkInstanceGuard;
 
 use super::physical_device_manager::PhysicalDevice;
 

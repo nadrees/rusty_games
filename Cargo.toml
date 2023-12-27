@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 anyhow = { version = "1.0.76", features = ["backtrace"] }
 ash = { version = "0.37.3", features = ["linked"] }
+glfw = { version = "0.54.0", features = ["vulkan"] }
