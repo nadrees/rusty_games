@@ -7,3 +7,7 @@ pub fn init_logging() -> Result<()> {
     logger.init()?;
     Ok(())
 }
+
+pub struct QueueFamilyIndicies {
+    pub graphics_family: Option<u32>,
+}

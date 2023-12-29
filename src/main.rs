@@ -7,12 +7,13 @@ use ash::{
         make_api_version, ApplicationInfo, Bool32, DebugUtilsMessageSeverityFlagsEXT,
         DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCallbackDataEXT,
         DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerCreateInfoEXTBuilder,
-        DebugUtilsMessengerEXT, InstanceCreateInfo, PhysicalDevice, API_VERSION_1_3,
+        DebugUtilsMessengerEXT, DeviceCreateInfo, DeviceQueueCreateInfo, InstanceCreateInfo,
+        PhysicalDevice, QueueFamilyProperties, QueueFlags, API_VERSION_1_3,
     },
     Entry, Instance,
 };
 use glfw::{fail_on_errors, Glfw};
-use rusty_games::init_logging;
+use rusty_games::{init_logging, QueueFamilyIndicies};
 use tracing::{event, Level};
 
 const API_VERSION: u32 = API_VERSION_1_3;
@@ -83,6 +84,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let debug_utils = create_debug_utils(&entry, &instance)?;
 
+    let physical_device = get_physical_device(&instance)?;
+    let queue_family_indicies = find_queue_families(&instance, &physical_device);
+
+    let queue_priorities = vec![1.0f32];
+    let device_queue_create_infos = vec![DeviceQueueCreateInfo::builder()
+        .queue_family_index(
+            queue_family_indicies
+                .graphics_family
+                .ok_or(anyhow!("No graphics family index"))?,
+        )
+        .queue_priorities(&queue_priorities)
+        .build()];
+    let device_create_info =
+        DeviceCreateInfo::builder().queue_create_infos(&device_queue_create_infos);
+    let logical_device =
+        unsafe { instance.create_device(physical_device, &device_create_info, None)? };
+
     while !window.should_close() {
         glfw.wait_events();
     }
@@ -90,7 +108,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some((debug_utils, debug_utils_extension)) = debug_utils {
         unsafe { debug_utils.destroy_debug_utils_messenger(debug_utils_extension, None) }
     }
-    unsafe { instance.destroy_instance(None) };
+    unsafe {
+        logical_device.destroy_device(None);
+        instance.destroy_instance(None);
+    };
 
     Ok(())
 }
@@ -98,9 +119,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn get_physical_device(instance: &Instance) -> Result<PhysicalDevice> {
     let physical_devices = unsafe { instance.enumerate_physical_devices() }?;
     for physical_device in physical_devices {
-        return Ok(physical_device);
+        let queue_families = find_queue_families(instance, &physical_device);
+        if queue_families.graphics_family.is_some() {
+            return Ok(physical_device);
+        }
     }
     Err(anyhow!("no suitable graphics cards found!"))
+}
+
+fn find_queue_families(instance: &Instance, device: &PhysicalDevice) -> QueueFamilyIndicies {
+    fn find_queue_family_index(
+        queue_family_properties: Vec<QueueFamilyProperties>,
+        flags: QueueFlags,
+    ) -> Option<u32> {
+        queue_family_properties
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, queue_family_props)| {
+                if queue_family_props.queue_flags.contains(flags) {
+                    return Some(index as u32);
+                } else {
+                    return None;
+                }
+            })
+            .collect::<Vec<_>>()
+            .first()
+            .cloned()
+    }
+
+    let queue_family_properties =
+        unsafe { instance.get_physical_device_queue_family_properties(*device) };
+    let graphics_family = find_queue_family_index(queue_family_properties, QueueFlags::GRAPHICS);
+    QueueFamilyIndicies { graphics_family }
 }
 
 fn get_extension_names(glfw: &Glfw) -> Result<Vec<String>> {
