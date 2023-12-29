@@ -8,6 +8,7 @@ pub fn init_logging() -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
 pub struct QueueFamilyIndicies {
     /// family capable of runing graphics related commands
     pub graphics_family: Option<u32>,

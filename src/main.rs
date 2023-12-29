@@ -14,7 +14,7 @@ use ash::{
 };
 use glfw::{fail_on_errors, Glfw};
 use rusty_games::{init_logging, QueueFamilyIndicies};
-use tracing::{event, Level};
+use tracing::{debug, event, Level};
 
 const API_VERSION: u32 = API_VERSION_1_3;
 const WINDOW_WIDTH: u32 = 800;
@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .engine_name(&appname)
         .engine_version(app_version);
 
-    let extension_names: Vec<CString> = get_extension_names(&glfw)?
+    let extension_names: Vec<CString> = get_instance_extension_names(&glfw)?
         .into_iter()
         .map(|extension_name| CString::new(extension_name))
         .collect::<Result<_, _>>()?;
@@ -94,6 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let physical_device = get_physical_device(&instance, &surface, &surface_ptr)?;
     let queue_family_indicies =
         find_queue_families(&instance, &physical_device, &surface, &surface_ptr)?;
+    debug!("Queue family indicies: {:?}", queue_family_indicies);
 
     let graphics_queue_family_index = queue_family_indicies
         .graphics_family
@@ -196,11 +197,12 @@ fn find_queue_families(
     })
 }
 
-fn get_extension_names(glfw: &Glfw) -> Result<Vec<String>> {
+fn get_instance_extension_names(glfw: &Glfw) -> Result<Vec<String>> {
     let mut extension_names: Vec<String> = vec![DebugUtils::name().to_str()?.to_owned()];
     if let Some(mut glfw_required_extensions) = glfw.get_required_instance_extensions() {
         extension_names.append(&mut glfw_required_extensions);
     }
+    debug!("Instance Extension names: {:?}", extension_names);
     Ok(extension_names)
 }
 
@@ -215,6 +217,7 @@ fn get_validation_layers() -> Vec<&'static str> {
             vec![]
         }
     };
+    debug!("Validation layers: {:?}", requested_validation_layers);
     requested_validation_layers
 }
 
