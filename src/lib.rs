@@ -9,5 +9,8 @@ pub fn init_logging() -> Result<()> {
 }
 
 pub struct QueueFamilyIndicies {
+    /// family capable of runing graphics related commands
     pub graphics_family: Option<u32>,
+    /// family capable of displaying results on the screen
+    pub present_family: Option<u32>,
 }

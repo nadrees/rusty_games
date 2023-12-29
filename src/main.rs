@@ -1,14 +1,14 @@
-use std::ffi::CString;
+use std::{collections::HashSet, ffi::CString, mem::MaybeUninit, ptr};
 
 use anyhow::{anyhow, Result};
 use ash::{
-    extensions::ext::DebugUtils,
+    extensions::{ext::DebugUtils, khr::Surface},
     vk::{
         make_api_version, ApplicationInfo, Bool32, DebugUtilsMessageSeverityFlagsEXT,
         DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCallbackDataEXT,
         DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerCreateInfoEXTBuilder,
         DebugUtilsMessengerEXT, DeviceCreateInfo, DeviceQueueCreateInfo, InstanceCreateInfo,
-        PhysicalDevice, QueueFamilyProperties, QueueFlags, API_VERSION_1_3,
+        PhysicalDevice, QueueFamilyProperties, QueueFlags, SurfaceKHR, API_VERSION_1_3,
     },
     Entry, Instance,
 };
@@ -82,24 +82,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let instance = unsafe { entry.create_instance(&instance_create_info, None)? };
 
+    let mut surface_ptr: std::mem::MaybeUninit<SurfaceKHR> = MaybeUninit::uninit();
+    window
+        .create_window_surface(instance.handle(), ptr::null(), surface_ptr.as_mut_ptr())
+        .result()?;
+    let surface_ptr = unsafe { surface_ptr.assume_init() };
+    let surface = Surface::new(&entry, &instance);
+
     let debug_utils = create_debug_utils(&entry, &instance)?;
 
-    let physical_device = get_physical_device(&instance)?;
-    let queue_family_indicies = find_queue_families(&instance, &physical_device);
+    let physical_device = get_physical_device(&instance, &surface, &surface_ptr)?;
+    let queue_family_indicies =
+        find_queue_families(&instance, &physical_device, &surface, &surface_ptr)?;
+
+    let graphics_queue_family_index = queue_family_indicies
+        .graphics_family
+        .ok_or(anyhow!("No graphics family index"))?;
+    let present_queue_family_index = queue_family_indicies
+        .present_family
+        .ok_or(anyhow!("No present family index"))?;
 
     let queue_priorities = vec![1.0f32];
-    let device_queue_create_infos = vec![DeviceQueueCreateInfo::builder()
-        .queue_family_index(
-            queue_family_indicies
-                .graphics_family
-                .ok_or(anyhow!("No graphics family index"))?,
-        )
-        .queue_priorities(&queue_priorities)
-        .build()];
+    let queue_indexes = HashSet::from([graphics_queue_family_index, present_queue_family_index]);
+    let device_queue_create_infos = queue_indexes
+        .into_iter()
+        .map(|queue_family_index| {
+            DeviceQueueCreateInfo::builder()
+                .queue_family_index(queue_family_index)
+                .queue_priorities(&queue_priorities)
+                .build()
+        })
+        .collect::<Vec<_>>();
     let device_create_info =
         DeviceCreateInfo::builder().queue_create_infos(&device_queue_create_infos);
     let logical_device =
         unsafe { instance.create_device(physical_device, &device_create_info, None)? };
+    let graphics_queue = unsafe { logical_device.get_device_queue(graphics_queue_family_index, 0) };
+    let present_queue = unsafe { logical_device.get_device_queue(present_queue_family_index, 0) };
 
     while !window.should_close() {
         glfw.wait_events();
@@ -110,16 +129,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     unsafe {
         logical_device.destroy_device(None);
+        surface.destroy_surface(surface_ptr, None);
         instance.destroy_instance(None);
     };
 
     Ok(())
 }
 
-fn get_physical_device(instance: &Instance) -> Result<PhysicalDevice> {
+fn get_physical_device(
+    instance: &Instance,
+    surface: &Surface,
+    surface_ptr: &SurfaceKHR,
+) -> Result<PhysicalDevice> {
     let physical_devices = unsafe { instance.enumerate_physical_devices() }?;
     for physical_device in physical_devices {
-        let queue_families = find_queue_families(instance, &physical_device);
+        let queue_families = find_queue_families(instance, &physical_device, surface, surface_ptr)?;
         if queue_families.graphics_family.is_some() {
             return Ok(physical_device);
         }
@@ -127,9 +151,14 @@ fn get_physical_device(instance: &Instance) -> Result<PhysicalDevice> {
     Err(anyhow!("no suitable graphics cards found!"))
 }
 
-fn find_queue_families(instance: &Instance, device: &PhysicalDevice) -> QueueFamilyIndicies {
+fn find_queue_families(
+    instance: &Instance,
+    device: &PhysicalDevice,
+    surface: &Surface,
+    surface_ptr: &SurfaceKHR,
+) -> Result<QueueFamilyIndicies> {
     fn find_queue_family_index(
-        queue_family_properties: Vec<QueueFamilyProperties>,
+        queue_family_properties: &Vec<QueueFamilyProperties>,
         flags: QueueFlags,
     ) -> Option<u32> {
         queue_family_properties
@@ -149,8 +178,22 @@ fn find_queue_families(instance: &Instance, device: &PhysicalDevice) -> QueueFam
 
     let queue_family_properties =
         unsafe { instance.get_physical_device_queue_family_properties(*device) };
-    let graphics_family = find_queue_family_index(queue_family_properties, QueueFlags::GRAPHICS);
-    QueueFamilyIndicies { graphics_family }
+    let graphics_family = find_queue_family_index(&queue_family_properties, QueueFlags::GRAPHICS);
+
+    let mut present_family = None;
+    for index in 0..queue_family_properties.len() as u32 {
+        let supports_present =
+            unsafe { surface.get_physical_device_surface_support(*device, index, *surface_ptr) }?;
+        if supports_present {
+            present_family = Some(index);
+            break;
+        }
+    }
+
+    Ok(QueueFamilyIndicies {
+        graphics_family,
+        present_family,
+    })
 }
 
 fn get_extension_names(glfw: &Glfw) -> Result<Vec<String>> {
