@@ -16,10 +16,10 @@ use ash::{
         DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
         DebugUtilsMessengerCallbackDataEXT, DebugUtilsMessengerCreateInfoEXT,
         DebugUtilsMessengerCreateInfoEXTBuilder, DebugUtilsMessengerEXT, DeviceCreateInfo,
-        DeviceQueueCreateInfo, Extent2D, Format, ImageUsageFlags, InstanceCreateInfo,
-        PhysicalDevice, PresentModeKHR, QueueFamilyProperties, QueueFlags, SharingMode,
-        SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR,
-        API_VERSION_1_3,
+        DeviceQueueCreateInfo, Extent2D, Format, ImageAspectFlags, ImageSubresourceRange,
+        ImageUsageFlags, ImageViewCreateInfo, ImageViewType, InstanceCreateInfo, PhysicalDevice,
+        PresentModeKHR, QueueFamilyProperties, QueueFlags, SharingMode, SurfaceCapabilitiesKHR,
+        SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, API_VERSION_1_3,
     },
     Entry, Instance,
 };
@@ -191,6 +191,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let swap_chain_handle =
         unsafe { swap_chain.create_swapchain(&swap_chain_creation_info, None) }?;
 
+    let swap_chain_images = unsafe { swap_chain.get_swapchain_images(swap_chain_handle) }?;
+    let image_views = swap_chain_images
+        .into_iter()
+        .map(|image| {
+            let image_view_create_info = ImageViewCreateInfo::builder()
+                .image(image)
+                .view_type(ImageViewType::TYPE_2D)
+                .format(surface_format.format)
+                .subresource_range(
+                    ImageSubresourceRange::builder()
+                        .aspect_mask(ImageAspectFlags::COLOR)
+                        .base_mip_level(0)
+                        .level_count(1)
+                        .base_array_layer(0)
+                        .layer_count(1)
+                        .build(),
+                );
+            unsafe { logical_device.create_image_view(&image_view_create_info, None) }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
     while !window.should_close() {
         glfw.wait_events();
     }
@@ -199,6 +220,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         unsafe { debug_utils.destroy_debug_utils_messenger(debug_utils_extension, None) }
     }
     unsafe {
+        image_views
+            .into_iter()
+            .for_each(|image_view| logical_device.destroy_image_view(image_view, None));
         swap_chain.destroy_swapchain(swap_chain_handle, None);
         logical_device.destroy_device(None);
         surface.destroy_surface(surface_ptr, None);
