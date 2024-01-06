@@ -1,19 +1,30 @@
-use std::{collections::HashSet, ffi::CString, mem::MaybeUninit, ptr};
+use std::{
+    collections::HashSet,
+    ffi::{c_uint, CStr, CString},
+    mem::MaybeUninit,
+    ptr,
+};
 
 use anyhow::{anyhow, Result};
 use ash::{
-    extensions::{ext::DebugUtils, khr::Surface},
+    extensions::{
+        ext::DebugUtils,
+        khr::{Surface, Swapchain},
+    },
     vk::{
-        make_api_version, ApplicationInfo, Bool32, DebugUtilsMessageSeverityFlagsEXT,
-        DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCallbackDataEXT,
-        DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerCreateInfoEXTBuilder,
-        DebugUtilsMessengerEXT, DeviceCreateInfo, DeviceQueueCreateInfo, InstanceCreateInfo,
-        PhysicalDevice, QueueFamilyProperties, QueueFlags, SurfaceKHR, API_VERSION_1_3,
+        make_api_version, ApplicationInfo, Bool32, ColorSpaceKHR, CompositeAlphaFlagsKHR,
+        DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
+        DebugUtilsMessengerCallbackDataEXT, DebugUtilsMessengerCreateInfoEXT,
+        DebugUtilsMessengerCreateInfoEXTBuilder, DebugUtilsMessengerEXT, DeviceCreateInfo,
+        DeviceQueueCreateInfo, Extent2D, Format, ImageUsageFlags, InstanceCreateInfo,
+        PhysicalDevice, PresentModeKHR, QueueFamilyProperties, QueueFlags, SharingMode,
+        SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR,
+        API_VERSION_1_3,
     },
     Entry, Instance,
 };
-use glfw::{fail_on_errors, Glfw};
-use rusty_games::{init_logging, QueueFamilyIndicies};
+use glfw::{fail_on_errors, Glfw, PWindow};
+use rusty_games::{init_logging, QueueFamilyIndicies, SwapChainSupportDetails};
 use tracing::{debug, event, Level};
 
 const API_VERSION: u32 = API_VERSION_1_3;
@@ -104,22 +115,81 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or(anyhow!("No present family index"))?;
 
     let queue_priorities = vec![1.0f32];
-    let queue_indexes = HashSet::from([graphics_queue_family_index, present_queue_family_index]);
+    let queue_indexes = Vec::from_iter(HashSet::from([
+        graphics_queue_family_index,
+        present_queue_family_index,
+    ]));
     let device_queue_create_infos = queue_indexes
-        .into_iter()
+        .iter()
         .map(|queue_family_index| {
             DeviceQueueCreateInfo::builder()
-                .queue_family_index(queue_family_index)
+                .queue_family_index(*queue_family_index)
                 .queue_priorities(&queue_priorities)
                 .build()
         })
         .collect::<Vec<_>>();
-    let device_create_info =
-        DeviceCreateInfo::builder().queue_create_infos(&device_queue_create_infos);
+
+    let device_extension_names: Vec<CString> = get_device_extension_names()?
+        .into_iter()
+        .map(|extension_name| CString::new(extension_name))
+        .collect::<Result<_, _>>()?;
+    let device_extension_name_ptrs = device_extension_names
+        .iter()
+        .map(|device_extension| device_extension.as_ptr())
+        .collect::<Vec<_>>();
+
+    let device_create_info = DeviceCreateInfo::builder()
+        .queue_create_infos(&device_queue_create_infos)
+        .enabled_extension_names(&device_extension_name_ptrs);
     let logical_device =
         unsafe { instance.create_device(physical_device, &device_create_info, None)? };
+
     let graphics_queue = unsafe { logical_device.get_device_queue(graphics_queue_family_index, 0) };
     let present_queue = unsafe { logical_device.get_device_queue(present_queue_family_index, 0) };
+
+    let swap_chain_support_details =
+        query_swap_chain_support(&surface, &surface_ptr, &physical_device)?;
+    let surface_format = choose_swap_chain_format(&swap_chain_support_details.formats);
+    let presentation_mode = choose_presentation_mode(&swap_chain_support_details.present_modes);
+    let extent = choose_swap_extent(&window, &swap_chain_support_details.capabilities)?;
+    let mut image_count = swap_chain_support_details.capabilities.min_image_count + 1;
+    if swap_chain_support_details.capabilities.max_image_count > 0 {
+        image_count = image_count.clamp(
+            swap_chain_support_details.capabilities.min_image_count,
+            swap_chain_support_details.capabilities.max_image_count,
+        );
+    }
+    let graphics_and_present_queues_are_same =
+        graphics_queue_family_index == present_queue_family_index;
+    let swap_chain_creation_info = SwapchainCreateInfoKHR::builder()
+        // ignore alpha channel
+        .composite_alpha(CompositeAlphaFlagsKHR::OPAQUE)
+        // enable clipping to discard pixels that are hidden by something else (like another window)
+        .clipped(true)
+        // not doing sterioscopic processing, only need 1 layer
+        .image_array_layers(1)
+        .image_color_space(surface_format.color_space)
+        .image_extent(extent)
+        .image_format(surface_format.format)
+        // if queues are the same, use exclusive mode for best perfomance
+        .image_sharing_mode(match graphics_and_present_queues_are_same {
+            true => SharingMode::EXCLUSIVE,
+            false => SharingMode::CONCURRENT,
+        })
+        // we're rendering images, so set usage as a color attachment
+        .image_usage(ImageUsageFlags::COLOR_ATTACHMENT)
+        .min_image_count(image_count)
+        // no extra transforms - just pass in current transform
+        .pre_transform(swap_chain_support_details.capabilities.current_transform)
+        .present_mode(presentation_mode)
+        .queue_family_indices(match graphics_and_present_queues_are_same {
+            true => &[],
+            false => &queue_indexes,
+        })
+        .surface(surface_ptr);
+    let swap_chain = Swapchain::new_from_instance(&entry, &instance, logical_device.handle());
+    let swap_chain_handle =
+        unsafe { swap_chain.create_swapchain(&swap_chain_creation_info, None) }?;
 
     while !window.should_close() {
         glfw.wait_events();
@@ -129,6 +199,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         unsafe { debug_utils.destroy_debug_utils_messenger(debug_utils_extension, None) }
     }
     unsafe {
+        swap_chain.destroy_swapchain(swap_chain_handle, None);
         logical_device.destroy_device(None);
         surface.destroy_surface(surface_ptr, None);
         instance.destroy_instance(None);
@@ -137,15 +208,112 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn choose_swap_chain_format(available_formats: &Vec<SurfaceFormatKHR>) -> &SurfaceFormatKHR {
+    available_formats
+        .iter()
+        .find(|format| {
+            format.format == Format::B8G8R8A8_SRGB
+                && format.color_space == ColorSpaceKHR::SRGB_NONLINEAR
+        })
+        .unwrap_or_else(|| available_formats.first().expect("No availabe formats!"))
+}
+
+fn choose_presentation_mode(available_modes: &Vec<PresentModeKHR>) -> PresentModeKHR {
+    if available_modes.contains(&PresentModeKHR::MAILBOX) {
+        PresentModeKHR::MAILBOX
+    } else {
+        PresentModeKHR::FIFO
+    }
+}
+
+fn choose_swap_extent(window: &PWindow, capabilities: &SurfaceCapabilitiesKHR) -> Result<Extent2D> {
+    if capabilities.current_extent.width != c_uint::MAX {
+        return Ok(capabilities.current_extent);
+    }
+    let (width, height) = window.get_framebuffer_size();
+    let width = u32::try_from(width)?;
+    let height = u32::try_from(height)?;
+    Ok(Extent2D {
+        width: width.clamp(
+            capabilities.min_image_extent.width,
+            capabilities.max_image_extent.width,
+        ),
+        height: height.clamp(
+            capabilities.min_image_extent.height,
+            capabilities.max_image_extent.height,
+        ),
+    })
+}
+
+fn query_swap_chain_support(
+    surface: &Surface,
+    surface_ptr: &SurfaceKHR,
+    device: &PhysicalDevice,
+) -> Result<SwapChainSupportDetails> {
+    let capabilities =
+        unsafe { surface.get_physical_device_surface_capabilities(*device, *surface_ptr) }?;
+    let formats = unsafe { surface.get_physical_device_surface_formats(*device, *surface_ptr) }?;
+    let present_modes =
+        unsafe { surface.get_physical_device_surface_present_modes(*device, *surface_ptr) }?;
+    Ok(SwapChainSupportDetails {
+        capabilities,
+        formats,
+        present_modes,
+    })
+}
+
 fn get_physical_device(
     instance: &Instance,
     surface: &Surface,
     surface_ptr: &SurfaceKHR,
 ) -> Result<PhysicalDevice> {
+    fn device_supports_required_queues(
+        instance: &Instance,
+        surface: &Surface,
+        surface_ptr: &SurfaceKHR,
+        physical_device: &PhysicalDevice,
+    ) -> Result<bool> {
+        let queue_families = find_queue_families(instance, &physical_device, surface, surface_ptr)?;
+        Ok(queue_families.graphics_family.is_some() && queue_families.present_family.is_some())
+    }
+
+    fn device_supports_required_extensions(
+        instance: &Instance,
+        physical_device: &PhysicalDevice,
+    ) -> Result<bool> {
+        let required_extension_names = get_device_extension_names()?;
+
+        let extensions =
+            unsafe { instance.enumerate_device_extension_properties(*physical_device) }?;
+        let mut available_extension_names = HashSet::new();
+        for extension in extensions {
+            let extension_name = unsafe { CStr::from_ptr(extension.extension_name.as_ptr()) }
+                .to_str()?
+                .to_owned();
+            available_extension_names.insert(extension_name);
+        }
+
+        Ok(required_extension_names
+            .iter()
+            .all(|extension_name| available_extension_names.contains(extension_name)))
+    }
+
+    fn device_supports_swapchain(
+        surface: &Surface,
+        surface_ptr: &SurfaceKHR,
+        device: &PhysicalDevice,
+    ) -> Result<bool> {
+        let swapchain_support_details = query_swap_chain_support(surface, surface_ptr, device)?;
+        Ok(!swapchain_support_details.formats.is_empty()
+            && !swapchain_support_details.present_modes.is_empty())
+    }
+
     let physical_devices = unsafe { instance.enumerate_physical_devices() }?;
     for physical_device in physical_devices {
-        let queue_families = find_queue_families(instance, &physical_device, surface, surface_ptr)?;
-        if queue_families.graphics_family.is_some() {
+        if device_supports_required_queues(instance, surface, surface_ptr, &physical_device)?
+            && device_supports_required_extensions(instance, &physical_device)?
+            && device_supports_swapchain(surface, surface_ptr, &physical_device)?
+        {
             return Ok(physical_device);
         }
     }
@@ -204,6 +372,12 @@ fn get_instance_extension_names(glfw: &Glfw) -> Result<Vec<String>> {
     }
     debug!("Instance Extension names: {:?}", extension_names);
     Ok(extension_names)
+}
+
+fn get_device_extension_names() -> Result<Vec<String>> {
+    let device_extension_names = vec![Swapchain::name().to_str()?.to_owned()];
+    debug!("Device Extension names: {:?}", device_extension_names);
+    Ok(device_extension_names)
 }
 
 fn get_validation_layers() -> Vec<&'static str> {
