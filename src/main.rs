@@ -1,24 +1,20 @@
-use std::{
-    collections::HashSet,
-    ffi::{c_uint, CString},
-};
+use std::ffi::c_uint;
 
 use anyhow::{anyhow, Result};
 use ash::{
     extensions::{ext::DebugUtils, khr::Swapchain},
     vk::{
-        ColorSpaceKHR, CompositeAlphaFlagsKHR, DebugUtilsMessengerCreateInfoEXT, DeviceCreateInfo,
-        DeviceQueueCreateInfo, Extent2D, Format, ImageAspectFlags, ImageSubresourceRange,
-        ImageUsageFlags, ImageViewCreateInfo, ImageViewType, PresentModeKHR, SharingMode,
-        SurfaceCapabilitiesKHR, SurfaceFormatKHR, SwapchainCreateInfoKHR,
+        ColorSpaceKHR, CompositeAlphaFlagsKHR, DebugUtilsMessengerCreateInfoEXT, Extent2D, Format,
+        ImageAspectFlags, ImageSubresourceRange, ImageUsageFlags, ImageViewCreateInfo,
+        ImageViewType, PresentModeKHR, SharingMode, SurfaceCapabilitiesKHR, SurfaceFormatKHR,
+        SwapchainCreateInfoKHR,
     },
     Entry,
 };
 use glfw::{fail_on_errors, Glfw, PWindow};
 use rusty_games::{
     get_debug_utils_create_info, init_logging, physical_device::get_physical_device,
-    query_swap_chain_support, queue_families::find_queue_families, DebugUtilsExtension,
-    InstanceGuard, SurfaceGuard,
+    query_swap_chain_support, DebugUtilsExtension, InstanceGuard, LogicalDeviceGuard, SurfaceGuard,
 };
 use tracing::debug;
 
@@ -73,48 +69,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let physical_device =
         get_physical_device(&instance_guard, &surface, &get_device_extension_names()?)?;
-    let queue_family_indicies = find_queue_families(&instance_guard, &physical_device, &surface)?;
-    debug!("Queue family indicies: {:?}", queue_family_indicies);
+    let logical_device = LogicalDeviceGuard::try_new(
+        &instance_guard,
+        &physical_device,
+        &surface,
+        &get_device_extension_names()?,
+    )?;
 
-    let graphics_queue_family_index = queue_family_indicies
-        .graphics_family
-        .ok_or(anyhow!("No graphics family index"))?;
-    let present_queue_family_index = queue_family_indicies
-        .present_family
-        .ok_or(anyhow!("No present family index"))?;
-
-    let queue_priorities = vec![1.0f32];
-    let queue_indexes = Vec::from_iter(HashSet::from([
-        graphics_queue_family_index,
-        present_queue_family_index,
-    ]));
-    let device_queue_create_infos = queue_indexes
-        .iter()
-        .map(|queue_family_index| {
-            DeviceQueueCreateInfo::builder()
-                .queue_family_index(*queue_family_index)
-                .queue_priorities(&queue_priorities)
-                .build()
-        })
-        .collect::<Vec<_>>();
-
-    let device_extension_names: Vec<CString> = get_device_extension_names()?
-        .into_iter()
-        .map(|extension_name| CString::new(extension_name))
-        .collect::<Result<_, _>>()?;
-    let device_extension_name_ptrs = device_extension_names
-        .iter()
-        .map(|device_extension| device_extension.as_ptr())
-        .collect::<Vec<_>>();
-
-    let device_create_info = DeviceCreateInfo::builder()
-        .queue_create_infos(&device_queue_create_infos)
-        .enabled_extension_names(&device_extension_name_ptrs);
-    let logical_device =
-        unsafe { instance_guard.create_device(physical_device, &device_create_info, None)? };
-
-    let graphics_queue = unsafe { logical_device.get_device_queue(graphics_queue_family_index, 0) };
-    let present_queue = unsafe { logical_device.get_device_queue(present_queue_family_index, 0) };
+    let graphics_queue = logical_device.get_graphics_queue();
+    let present_queue = logical_device.get_present_queue();
 
     let swap_chain_support_details = query_swap_chain_support(&surface, &physical_device)?;
     let surface_format = choose_swap_chain_format(&swap_chain_support_details.formats);
@@ -128,7 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     let graphics_and_present_queues_are_same =
-        graphics_queue_family_index == present_queue_family_index;
+        logical_device.graphics_queue_family_index == logical_device.present_queue_family_index;
     let swap_chain_creation_info = SwapchainCreateInfoKHR::builder()
         // ignore alpha channel
         .composite_alpha(CompositeAlphaFlagsKHR::OPAQUE)
@@ -152,7 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .present_mode(presentation_mode)
         .queue_family_indices(match graphics_and_present_queues_are_same {
             true => &[],
-            false => &queue_indexes,
+            false => &logical_device.queue_indicies,
         })
         .surface(*surface);
     let swap_chain =
@@ -190,7 +153,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .into_iter()
             .for_each(|image_view| logical_device.destroy_image_view(image_view, None));
         swap_chain.destroy_swapchain(swap_chain_handle, None);
-        logical_device.destroy_device(None);
     };
 
     Ok(())
