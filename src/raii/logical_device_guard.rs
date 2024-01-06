@@ -13,21 +13,21 @@ use crate::{queue_families::find_queue_families, InstanceGuard, SurfaceGuard};
 pub struct LogicalDeviceGuard {
     device: Device,
     pub graphics_queue_family_index: u32,
+    pub physical_device: PhysicalDevice,
     pub present_queue_family_index: u32,
     pub queue_indicies: Vec<u32>,
-    // need to keep a reference to the instance to ensure we get
-    // dropped before it does
-    _instance: Rc<InstanceGuard>,
+    pub surface: SurfaceGuard,
+    pub instance: Rc<InstanceGuard>,
 }
 
 impl LogicalDeviceGuard {
     pub fn try_new(
         instance: &Rc<InstanceGuard>,
-        physical_device: &PhysicalDevice,
-        surface: &SurfaceGuard,
+        physical_device: PhysicalDevice,
+        surface: SurfaceGuard,
         device_extension_names: &Vec<String>,
-    ) -> Result<Self> {
-        let queue_family_indicies = find_queue_families(instance, &physical_device, surface)?;
+    ) -> Result<Rc<Self>> {
+        let queue_family_indicies = find_queue_families(instance, &physical_device, &surface)?;
         debug!("Queue family indicies: {:?}", queue_family_indicies);
 
         let graphics_queue_family_index = queue_family_indicies
@@ -66,15 +66,17 @@ impl LogicalDeviceGuard {
             .queue_create_infos(&device_queue_create_infos)
             .enabled_extension_names(&device_extension_name_ptrs);
         let logical_device =
-            unsafe { instance.create_device(*physical_device, &device_create_info, None)? };
+            unsafe { instance.create_device(physical_device, &device_create_info, None)? };
 
-        Ok(Self {
+        Ok(Rc::new(Self {
             device: logical_device,
             graphics_queue_family_index,
+            physical_device,
             present_queue_family_index,
             queue_indicies,
-            _instance: Rc::clone(instance),
-        })
+            surface,
+            instance: Rc::clone(instance),
+        }))
     }
 
     pub fn get_graphics_queue(&self) -> Queue {

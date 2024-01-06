@@ -1,20 +1,13 @@
-use std::ffi::c_uint;
-
 use anyhow::{anyhow, Result};
 use ash::{
     extensions::{ext::DebugUtils, khr::Swapchain},
-    vk::{
-        ColorSpaceKHR, CompositeAlphaFlagsKHR, DebugUtilsMessengerCreateInfoEXT, Extent2D, Format,
-        ImageAspectFlags, ImageSubresourceRange, ImageUsageFlags, ImageViewCreateInfo,
-        ImageViewType, PresentModeKHR, SharingMode, SurfaceCapabilitiesKHR, SurfaceFormatKHR,
-        SwapchainCreateInfoKHR,
-    },
+    vk::DebugUtilsMessengerCreateInfoEXT,
     Entry,
 };
-use glfw::{fail_on_errors, Glfw, PWindow};
+use glfw::{fail_on_errors, Glfw};
 use rusty_games::{
     get_debug_utils_create_info, init_logging, physical_device::get_physical_device,
-    query_swap_chain_support, DebugUtilsExtension, InstanceGuard, LogicalDeviceGuard, SurfaceGuard,
+    DebugUtilsExtension, InstanceGuard, LogicalDeviceGuard, SurfaceGuard, SwapChainGuard,
 };
 use tracing::debug;
 
@@ -71,128 +64,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         get_physical_device(&instance_guard, &surface, &get_device_extension_names()?)?;
     let logical_device = LogicalDeviceGuard::try_new(
         &instance_guard,
-        &physical_device,
-        &surface,
+        physical_device,
+        surface,
         &get_device_extension_names()?,
     )?;
 
     let graphics_queue = logical_device.get_graphics_queue();
     let present_queue = logical_device.get_present_queue();
 
-    let swap_chain_support_details = query_swap_chain_support(&surface, &physical_device)?;
-    let surface_format = choose_swap_chain_format(&swap_chain_support_details.formats);
-    let presentation_mode = choose_presentation_mode(&swap_chain_support_details.present_modes);
-    let extent = choose_swap_extent(&window, &swap_chain_support_details.capabilities)?;
-    let mut image_count = swap_chain_support_details.capabilities.min_image_count + 1;
-    if swap_chain_support_details.capabilities.max_image_count > 0 {
-        image_count = image_count.clamp(
-            swap_chain_support_details.capabilities.min_image_count,
-            swap_chain_support_details.capabilities.max_image_count,
-        );
-    }
-    let graphics_and_present_queues_are_same =
-        logical_device.graphics_queue_family_index == logical_device.present_queue_family_index;
-    let swap_chain_creation_info = SwapchainCreateInfoKHR::builder()
-        // ignore alpha channel
-        .composite_alpha(CompositeAlphaFlagsKHR::OPAQUE)
-        // enable clipping to discard pixels that are hidden by something else (like another window)
-        .clipped(true)
-        // not doing sterioscopic processing, only need 1 layer
-        .image_array_layers(1)
-        .image_color_space(surface_format.color_space)
-        .image_extent(extent)
-        .image_format(surface_format.format)
-        // if queues are the same, use exclusive mode for best perfomance
-        .image_sharing_mode(match graphics_and_present_queues_are_same {
-            true => SharingMode::EXCLUSIVE,
-            false => SharingMode::CONCURRENT,
-        })
-        // we're rendering images, so set usage as a color attachment
-        .image_usage(ImageUsageFlags::COLOR_ATTACHMENT)
-        .min_image_count(image_count)
-        // no extra transforms - just pass in current transform
-        .pre_transform(swap_chain_support_details.capabilities.current_transform)
-        .present_mode(presentation_mode)
-        .queue_family_indices(match graphics_and_present_queues_are_same {
-            true => &[],
-            false => &logical_device.queue_indicies,
-        })
-        .surface(*surface);
-    let swap_chain =
-        Swapchain::new_from_instance(&entry, &instance_guard.instance, logical_device.handle());
-    let swap_chain_handle =
-        unsafe { swap_chain.create_swapchain(&swap_chain_creation_info, None) }?;
-
-    let swap_chain_images = unsafe { swap_chain.get_swapchain_images(swap_chain_handle) }?;
-    let image_views = swap_chain_images
-        .into_iter()
-        .map(|image| {
-            let image_view_create_info = ImageViewCreateInfo::builder()
-                .image(image)
-                .view_type(ImageViewType::TYPE_2D)
-                .format(surface_format.format)
-                .subresource_range(
-                    ImageSubresourceRange::builder()
-                        .aspect_mask(ImageAspectFlags::COLOR)
-                        .base_mip_level(0)
-                        .level_count(1)
-                        .base_array_layer(0)
-                        .layer_count(1)
-                        .build(),
-                );
-            unsafe { logical_device.create_image_view(&image_view_create_info, None) }
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let swap_chain = SwapChainGuard::try_new(&entry, logical_device, &window)?;
+    let swap_chain_images = swap_chain.get_images();
 
     while !window.should_close() {
         glfw.wait_events();
     }
 
-    unsafe {
-        image_views
-            .into_iter()
-            .for_each(|image_view| logical_device.destroy_image_view(image_view, None));
-        swap_chain.destroy_swapchain(swap_chain_handle, None);
-    };
-
     Ok(())
-}
-
-fn choose_swap_chain_format(available_formats: &Vec<SurfaceFormatKHR>) -> &SurfaceFormatKHR {
-    available_formats
-        .iter()
-        .find(|format| {
-            format.format == Format::B8G8R8A8_SRGB
-                && format.color_space == ColorSpaceKHR::SRGB_NONLINEAR
-        })
-        .unwrap_or_else(|| available_formats.first().expect("No availabe formats!"))
-}
-
-fn choose_presentation_mode(available_modes: &Vec<PresentModeKHR>) -> PresentModeKHR {
-    if available_modes.contains(&PresentModeKHR::MAILBOX) {
-        PresentModeKHR::MAILBOX
-    } else {
-        PresentModeKHR::FIFO
-    }
-}
-
-fn choose_swap_extent(window: &PWindow, capabilities: &SurfaceCapabilitiesKHR) -> Result<Extent2D> {
-    if capabilities.current_extent.width != c_uint::MAX {
-        return Ok(capabilities.current_extent);
-    }
-    let (width, height) = window.get_framebuffer_size();
-    let width = u32::try_from(width)?;
-    let height = u32::try_from(height)?;
-    Ok(Extent2D {
-        width: width.clamp(
-            capabilities.min_image_extent.width,
-            capabilities.max_image_extent.width,
-        ),
-        height: height.clamp(
-            capabilities.min_image_extent.height,
-            capabilities.max_image_extent.height,
-        ),
-    })
 }
 
 fn get_instance_extension_names(glfw: &Glfw) -> Result<Vec<String>> {
