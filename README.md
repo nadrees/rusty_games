@@ -4,6 +4,10 @@ Experimental codebase for games written in rust.
 
 ## Setup
 
+### Shader Language Support
+
+We write shaders in GLSL. To add language support for GLSL (and other shader languages) install [Shader languages support for VS Code](https://marketplace.visualstudio.com/items?itemName=slevesque.shader)
+
 ### Vulkan
 
 We use Vulkan as our 3D renderer. You must have Vulkan 1.3 installed:
