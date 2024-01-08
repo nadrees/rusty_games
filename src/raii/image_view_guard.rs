@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{ops::Deref, rc::Rc};
 
 use anyhow::Result;
 use ash::vk::{
@@ -20,7 +20,7 @@ impl ImageViewGuard {
         image: Image,
         logical_device: &Rc<LogicalDeviceGuard>,
         surface_format: &SurfaceFormatKHR,
-    ) -> Result<Self> {
+    ) -> Result<Rc<Self>> {
         let image_view_create_info = ImageViewCreateInfo::builder()
             .image(image)
             .view_type(ImageViewType::TYPE_2D)
@@ -36,11 +36,11 @@ impl ImageViewGuard {
             );
         let image_view =
             unsafe { logical_device.create_image_view(&image_view_create_info, None) }?;
-        Ok(Self {
+        Ok(Rc::new(Self {
             _image: image,
             logical_device: Rc::clone(logical_device),
             view: image_view,
-        })
+        }))
     }
 }
 
@@ -48,5 +48,13 @@ impl Drop for ImageViewGuard {
     fn drop(&mut self) {
         debug!("Dropping ImageViewGuard");
         unsafe { self.logical_device.destroy_image_view(self.view, None) }
+    }
+}
+
+impl Deref for ImageViewGuard {
+    type Target = ImageView;
+
+    fn deref(&self) -> &Self::Target {
+        &self.view
     }
 }

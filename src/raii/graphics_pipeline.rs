@@ -1,6 +1,9 @@
 use std::{ffi::CString, rc::Rc};
 
-use crate::{raii::shader_module_guard::ShaderModuleGuard, LogicalDeviceGuard, SwapChainGuard};
+use crate::{
+    raii::{frame_buffer_guard::FrameBufferGuard, shader_module_guard::ShaderModuleGuard},
+    LogicalDeviceGuard, SwapChainGuard,
+};
 use anyhow::Result;
 use ash::vk::{
     CullModeFlags, FrontFace, GraphicsPipelineCreateInfo, Pipeline, PipelineCache,
@@ -19,15 +22,16 @@ const VERTEX_SHADER_CODE: &str = "target/shaders/vert.spv";
 const FRAGMENT_SHADER_CODE: &str = "target/shaders/frag.spv";
 
 pub struct GraphicsPipeline {
+    _frame_buffers: Vec<FrameBufferGuard>,
     logical_device: Rc<LogicalDeviceGuard>,
     pipeline_layout: PipelineLayout,
     pipeline: Pipeline,
-    _render_pass: RenderPassGuard,
+    _render_pass: Rc<RenderPassGuard>,
 }
 
 impl GraphicsPipeline {
     pub fn try_new(
-        render_pass: RenderPassGuard,
+        render_pass: &Rc<RenderPassGuard>,
         subpass: u32,
         logical_device: &Rc<LogicalDeviceGuard>,
         swap_chain: &SwapChainGuard,
@@ -104,7 +108,7 @@ impl GraphicsPipeline {
             .multisample_state(&multisampling_state)
             .color_blend_state(&color_blend_state)
             .layout(pipeline_layout)
-            .render_pass(*render_pass)
+            .render_pass(***render_pass)
             .subpass(subpass)
             .build()];
 
@@ -119,11 +123,20 @@ impl GraphicsPipeline {
 
         debug!("Graphics pipeline created");
 
+        let frame_buffers = swap_chain
+            .image_views
+            .iter()
+            .map(|image_view| {
+                FrameBufferGuard::try_new(image_view, &render_pass, &swap_chain, &logical_device)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         Ok(GraphicsPipeline {
+            _frame_buffers: frame_buffers,
             pipeline: pipelines[0],
             pipeline_layout,
             logical_device: Rc::clone(logical_device),
-            _render_pass: render_pass,
+            _render_pass: Rc::clone(render_pass),
         })
     }
 }

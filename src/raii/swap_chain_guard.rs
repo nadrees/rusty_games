@@ -40,12 +40,14 @@ pub fn query_swap_chain_support(
 pub struct SwapChainGuard {
     handle: SwapchainKHR,
     pub extent: Extent2D,
-    image_views: Vec<ImageViewGuard>,
+    pub image_views: Vec<Rc<ImageViewGuard>>,
     pub surface_format: SurfaceFormatKHR,
     swapchain: Swapchain,
 }
 
 impl SwapChainGuard {
+    pub const LAYERS: u32 = 1;
+
     pub fn try_new(
         entry: &Entry,
         logical_device: &Rc<LogicalDeviceGuard>,
@@ -71,7 +73,7 @@ impl SwapChainGuard {
             // enable clipping to discard pixels that are hidden by something else (like another window)
             .clipped(true)
             // not doing sterioscopic processing, only need 1 layer
-            .image_array_layers(1)
+            .image_array_layers(Self::LAYERS)
             .image_color_space(surface_format.color_space)
             .image_extent(extent)
             .image_format(surface_format.format)
@@ -111,7 +113,7 @@ impl SwapChainGuard {
         })
     }
 
-    pub fn get_images(&self) -> Vec<&ImageViewGuard> {
+    pub fn get_images(&self) -> Vec<&Rc<ImageViewGuard>> {
         self.image_views.iter().collect()
     }
 }

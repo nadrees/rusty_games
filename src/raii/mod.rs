@@ -1,4 +1,5 @@
 pub mod debug_utils_extension;
+pub mod frame_buffer_guard;
 pub mod graphics_pipeline;
 pub mod image_view_guard;
 pub mod instance_guard;

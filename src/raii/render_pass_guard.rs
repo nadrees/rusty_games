@@ -18,7 +18,7 @@ impl RenderPassGuard {
     pub fn try_new(
         logical_device: &Rc<LogicalDeviceGuard>,
         swapchain: &SwapChainGuard,
-    ) -> Result<Self> {
+    ) -> Result<Rc<Self>> {
         debug!("Creating render pass...");
 
         let attachment_descriptions = [AttachmentDescription::builder()
@@ -61,10 +61,10 @@ impl RenderPassGuard {
 
         debug!("Render pass created");
 
-        Ok(Self {
+        Ok(Rc::new(Self {
             render_pass,
             logical_device: Rc::clone(logical_device),
-        })
+        }))
     }
 }
 
