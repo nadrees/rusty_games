@@ -1,18 +1,52 @@
+mod debug_utils_extension;
+mod instance_guard;
+mod logical_device_guard;
+mod physical_device;
+mod queue_families;
+mod surface_guard;
+
 use std::rc::Rc;
 
 use anyhow::Result;
 use ash::{
     extensions::{ext::DebugUtils, khr::Swapchain},
-    vk::DebugUtilsMessengerCreateInfoEXT,
+    vk::{
+        DebugUtilsMessengerCreateInfoEXT, PhysicalDevice, PresentModeKHR, SurfaceCapabilitiesKHR,
+        SurfaceFormatKHR,
+    },
     Entry,
 };
 use glfw::{Glfw, PWindow};
 use tracing::debug;
 
-use crate::{
-    get_debug_utils_create_info, physical_device::get_physical_device, DebugUtilsExtension,
-    InstanceGuard, LogicalDeviceGuard, SurfaceGuard,
+pub use logical_device_guard::LogicalDeviceGuard;
+
+use self::{
+    debug_utils_extension::{get_debug_utils_create_info, DebugUtilsExtension},
+    instance_guard::InstanceGuard,
+    physical_device::get_physical_device,
+    surface_guard::SurfaceGuard,
 };
+
+pub struct SwapChainSupportDetails {
+    pub capabilities: SurfaceCapabilitiesKHR,
+    pub formats: Vec<SurfaceFormatKHR>,
+    pub present_modes: Vec<PresentModeKHR>,
+}
+
+pub fn query_swap_chain_support(
+    surface: &SurfaceGuard,
+    device: &PhysicalDevice,
+) -> Result<SwapChainSupportDetails> {
+    let capabilities = surface.get_capabilities(device)?;
+    let formats = surface.get_surface_formats(device)?;
+    let present_modes = surface.get_presentation_modes(device)?;
+    Ok(SwapChainSupportDetails {
+        capabilities,
+        formats,
+        present_modes,
+    })
+}
 
 pub fn create_logical_device(
     entry: &Entry,

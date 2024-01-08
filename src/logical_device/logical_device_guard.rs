@@ -7,7 +7,9 @@ use ash::{
 };
 use tracing::debug;
 
-use crate::{queue_families::find_queue_families, InstanceGuard, SurfaceGuard};
+use crate::logical_device::queue_families::find_queue_families;
+
+use super::{instance_guard::InstanceGuard, surface_guard::SurfaceGuard};
 
 /// RAII for logical device
 pub struct LogicalDeviceGuard {

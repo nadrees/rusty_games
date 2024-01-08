@@ -12,7 +12,7 @@ use ash::{
 };
 use tracing::{debug, event, Level};
 
-use crate::InstanceGuard;
+use super::instance_guard::InstanceGuard;
 
 pub fn get_debug_utils_create_info<'a>() -> DebugUtilsMessengerCreateInfoEXTBuilder<'a> {
     DebugUtilsMessengerCreateInfoEXT::builder()

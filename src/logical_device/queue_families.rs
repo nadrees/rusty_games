@@ -1,7 +1,7 @@
 use anyhow::Result;
 use ash::vk::{PhysicalDevice, QueueFamilyProperties, QueueFlags};
 
-use crate::{InstanceGuard, SurfaceGuard};
+use super::{instance_guard::InstanceGuard, surface_guard::SurfaceGuard};
 
 #[derive(Debug)]
 pub struct QueueFamilyIndicies {

@@ -3,39 +3,19 @@ use std::{ffi::c_uint, rc::Rc};
 use ash::{
     extensions::khr::Swapchain,
     vk::{
-        ColorSpaceKHR, CompositeAlphaFlagsKHR, Extent2D, Format, ImageUsageFlags, PhysicalDevice,
-        PresentModeKHR, SharingMode, SurfaceCapabilitiesKHR, SurfaceFormatKHR,
-        SwapchainCreateInfoKHR, SwapchainKHR,
+        ColorSpaceKHR, CompositeAlphaFlagsKHR, Extent2D, Format, ImageUsageFlags, PresentModeKHR,
+        SharingMode, SurfaceCapabilitiesKHR, SurfaceFormatKHR, SwapchainCreateInfoKHR,
+        SwapchainKHR,
     },
     Entry,
 };
 use glfw::PWindow;
 use tracing::debug;
 
-use crate::{LogicalDeviceGuard, SurfaceGuard};
+use crate::{logical_device::query_swap_chain_support, LogicalDeviceGuard};
 use anyhow::Result;
 
 use super::image_view_guard::ImageViewGuard;
-
-pub struct SwapChainSupportDetails {
-    pub capabilities: SurfaceCapabilitiesKHR,
-    pub formats: Vec<SurfaceFormatKHR>,
-    pub present_modes: Vec<PresentModeKHR>,
-}
-
-pub fn query_swap_chain_support(
-    surface: &SurfaceGuard,
-    device: &PhysicalDevice,
-) -> Result<SwapChainSupportDetails> {
-    let capabilities = surface.get_capabilities(device)?;
-    let formats = surface.get_surface_formats(device)?;
-    let present_modes = surface.get_presentation_modes(device)?;
-    Ok(SwapChainSupportDetails {
-        capabilities,
-        formats,
-        present_modes,
-    })
-}
 
 pub struct SwapChainGuard {
     handle: SwapchainKHR,

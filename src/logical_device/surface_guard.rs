@@ -9,7 +9,7 @@ use ash::{
 use glfw::PWindow;
 use tracing::debug;
 
-use crate::InstanceGuard;
+use super::instance_guard::InstanceGuard;
 
 /// RAII for Surface
 pub struct SurfaceGuard {

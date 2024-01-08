@@ -1,8 +1,9 @@
 use std::{ffi::CString, rc::Rc};
 
 use crate::{
+    logical_device::LogicalDeviceGuard,
     raii::{frame_buffer_guard::FrameBufferGuard, shader_module_guard::ShaderModuleGuard},
-    LogicalDeviceGuard, SwapChainGuard,
+    SwapChainGuard,
 };
 use anyhow::Result;
 use ash::vk::{

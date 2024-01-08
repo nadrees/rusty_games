@@ -4,7 +4,7 @@ use anyhow::Result;
 use ash::vk::{Framebuffer, FramebufferCreateInfo};
 use tracing::debug;
 
-use crate::{LogicalDeviceGuard, SwapChainGuard};
+use crate::{logical_device::LogicalDeviceGuard, SwapChainGuard};
 
 use super::{image_view_guard::ImageViewGuard, render_pass_guard::RenderPassGuard};
 

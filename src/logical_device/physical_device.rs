@@ -1,10 +1,12 @@
 use std::{collections::HashSet, ffi::CStr};
 
-use crate::{
-    query_swap_chain_support, queue_families::find_queue_families, InstanceGuard, SurfaceGuard,
-};
 use anyhow::{anyhow, Result};
 use ash::vk::PhysicalDevice;
+
+use super::{
+    instance_guard::InstanceGuard, query_swap_chain_support, queue_families::find_queue_families,
+    surface_guard::SurfaceGuard,
+};
 
 pub fn get_physical_device(
     instance: &InstanceGuard,
