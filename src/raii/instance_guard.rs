@@ -8,6 +8,7 @@ use ash::{
     },
     Entry, Instance,
 };
+use tracing::debug;
 
 const API_VERSION: u32 = API_VERSION_1_3;
 
@@ -73,6 +74,7 @@ impl InstanceGuard {
 
 impl Drop for InstanceGuard {
     fn drop(&mut self) {
+        debug!("Dropping InstanceGuard");
         unsafe {
             self.instance.destroy_instance(None);
         }

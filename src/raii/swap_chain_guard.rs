@@ -10,6 +10,7 @@ use ash::{
     Entry,
 };
 use glfw::PWindow;
+use tracing::debug;
 
 use crate::{LogicalDeviceGuard, SurfaceGuard};
 use anyhow::Result;
@@ -117,6 +118,7 @@ impl SwapChainGuard {
 
 impl Drop for SwapChainGuard {
     fn drop(&mut self) {
+        debug!("Dropping SwapChainGuard");
         unsafe { self.swapchain.destroy_swapchain(self.handle, None) }
     }
 }

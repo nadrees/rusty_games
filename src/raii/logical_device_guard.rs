@@ -104,6 +104,7 @@ impl Deref for LogicalDeviceGuard {
 
 impl Drop for LogicalDeviceGuard {
     fn drop(&mut self) {
+        debug!("Dropping LogicalDeviceGuard");
         unsafe { self.device.destroy_device(None) }
     }
 }

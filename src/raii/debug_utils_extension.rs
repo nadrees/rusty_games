@@ -10,7 +10,7 @@ use ash::{
     },
     Entry,
 };
-use tracing::{event, Level};
+use tracing::{debug, event, Level};
 
 use crate::InstanceGuard;
 
@@ -53,6 +53,7 @@ impl DebugUtilsExtension {
 
 impl Drop for DebugUtilsExtension {
     fn drop(&mut self) {
+        debug!("Dropping DebugUtilsExtension");
         unsafe {
             self.debug_utils
                 .destroy_debug_utils_messenger(self.extension, None)

@@ -7,6 +7,7 @@ use ash::{
     Entry,
 };
 use glfw::PWindow;
+use tracing::debug;
 
 use crate::InstanceGuard;
 
@@ -68,6 +69,7 @@ impl SurfaceGuard {
 
 impl Drop for SurfaceGuard {
     fn drop(&mut self) {
+        debug!("Dropping SurfaceGuard");
         unsafe { self.surface.destroy_surface(self.surface_ptr, None) }
     }
 }

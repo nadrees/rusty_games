@@ -38,5 +38,5 @@ pub fn create_graphics_pipeline(
     swap_chain: &SwapChainGuard,
 ) -> Result<GraphicsPipeline> {
     let render_pass = RenderPassGuard::try_new(logical_device, swap_chain)?;
-    GraphicsPipeline::try_new(logical_device, swap_chain)
+    GraphicsPipeline::try_new(render_pass, 0, logical_device, swap_chain)
 }

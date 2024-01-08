@@ -1,10 +1,11 @@
-use std::rc::Rc;
+use std::{ops::Deref, rc::Rc};
 
 use anyhow::Result;
 use ash::vk::{
     AttachmentDescription, AttachmentLoadOp, AttachmentReference, AttachmentStoreOp, ImageLayout,
     PipelineBindPoint, RenderPass, RenderPassCreateInfo, SampleCountFlags, SubpassDescription,
 };
+use tracing::debug;
 
 use crate::{LogicalDeviceGuard, SwapChainGuard};
 
@@ -18,6 +19,8 @@ impl RenderPassGuard {
         logical_device: &Rc<LogicalDeviceGuard>,
         swapchain: &SwapChainGuard,
     ) -> Result<Self> {
+        debug!("Creating render pass...");
+
         let attachment_descriptions = [AttachmentDescription::builder()
             .format(swapchain.surface_format.format)
             // no multi-sampling, so only need 1 sample
@@ -56,6 +59,8 @@ impl RenderPassGuard {
         let render_pass =
             unsafe { logical_device.create_render_pass(&render_pass_create_info, None) }?;
 
+        debug!("Render pass created");
+
         Ok(Self {
             render_pass,
             logical_device: Rc::clone(logical_device),
@@ -65,9 +70,18 @@ impl RenderPassGuard {
 
 impl Drop for RenderPassGuard {
     fn drop(&mut self) {
+        debug!("Dropping RenderPassGuard");
         unsafe {
             self.logical_device
                 .destroy_render_pass(self.render_pass, None)
         }
+    }
+}
+
+impl Deref for RenderPassGuard {
+    type Target = RenderPass;
+
+    fn deref(&self) -> &Self::Target {
+        &self.render_pass
     }
 }

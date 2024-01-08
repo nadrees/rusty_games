@@ -3,6 +3,7 @@ use std::{fs, ops::Deref, rc::Rc};
 use crate::LogicalDeviceGuard;
 use anyhow::Result;
 use ash::vk::{ShaderModule, ShaderModuleCreateInfo};
+use tracing::debug;
 
 pub struct ShaderModuleGuard {
     shader_module: ShaderModule,
@@ -24,6 +25,7 @@ impl ShaderModuleGuard {
 
 impl Drop for ShaderModuleGuard {
     fn drop(&mut self) {
+        debug!("Dropping ShaderModuleGuard");
         unsafe {
             self.logical_device
                 .destroy_shader_module(self.shader_module, None)

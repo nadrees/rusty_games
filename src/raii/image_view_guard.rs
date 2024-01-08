@@ -5,6 +5,7 @@ use ash::vk::{
     Image, ImageAspectFlags, ImageSubresourceRange, ImageView, ImageViewCreateInfo, ImageViewType,
     SurfaceFormatKHR,
 };
+use tracing::debug;
 
 use crate::LogicalDeviceGuard;
 
@@ -45,6 +46,7 @@ impl ImageViewGuard {
 
 impl Drop for ImageViewGuard {
     fn drop(&mut self) {
+        debug!("Dropping ImageViewGuard");
         unsafe { self.logical_device.destroy_image_view(self.view, None) }
     }
 }
