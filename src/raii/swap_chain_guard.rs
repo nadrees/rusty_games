@@ -37,15 +37,17 @@ pub fn query_swap_chain_support(
 }
 
 pub struct SwapChainGuard {
-    swapchain: Swapchain,
     handle: SwapchainKHR,
+    pub extent: Extent2D,
     image_views: Vec<ImageViewGuard>,
+    pub surface_format: SurfaceFormatKHR,
+    swapchain: Swapchain,
 }
 
 impl SwapChainGuard {
     pub fn try_new(
         entry: &Entry,
-        logical_device: Rc<LogicalDeviceGuard>,
+        logical_device: &Rc<LogicalDeviceGuard>,
         window: &PWindow,
     ) -> Result<Self> {
         let swap_chain_support_details =
@@ -103,6 +105,8 @@ impl SwapChainGuard {
             swapchain: swap_chain,
             handle: swap_chain_handle,
             image_views,
+            extent,
+            surface_format: surface_format.to_owned(),
         })
     }
 
