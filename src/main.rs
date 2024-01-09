@@ -1,9 +1,7 @@
 use anyhow::{anyhow, Result};
 use ash::Entry;
 use glfw::fail_on_errors;
-use rusty_games::{
-    create_graphics_pipeline, create_logical_device, create_swap_chain, init_logging,
-};
+use rusty_games::{create_graphics_pipeline, create_logical_device, init_logging};
 
 const WINDOW_WIDTH: u32 = 800;
 const WINDOW_HEIGHT: u32 = 600;
@@ -27,8 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let entry = Entry::linked();
     let logical_device = create_logical_device(&entry, &glfw, &window)?;
-    let swap_chain = create_swap_chain(&entry, &logical_device, &window)?;
-    create_graphics_pipeline(&logical_device, &swap_chain)?;
+    create_graphics_pipeline(&entry, &window, &logical_device)?;
 
     while !window.should_close() {
         glfw.wait_events();

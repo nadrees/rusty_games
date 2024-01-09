@@ -12,7 +12,7 @@ use ash::{
 use glfw::PWindow;
 use tracing::debug;
 
-use crate::{logical_device::query_swap_chain_support, LogicalDeviceGuard};
+use crate::logical_device::{query_swap_chain_support, LogicalDeviceGuard};
 use anyhow::Result;
 
 use super::image_view_guard::ImageViewGuard;

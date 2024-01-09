@@ -1,10 +1,5 @@
 use std::{ffi::CString, rc::Rc};
 
-use crate::{
-    logical_device::LogicalDeviceGuard,
-    raii::{frame_buffer_guard::FrameBufferGuard, shader_module_guard::ShaderModuleGuard},
-    SwapChainGuard,
-};
 use anyhow::Result;
 use ash::vk::{
     CullModeFlags, FrontFace, GraphicsPipelineCreateInfo, Pipeline, PipelineCache,
@@ -17,12 +12,19 @@ use ash::vk::{
 };
 use tracing::debug;
 
-use super::render_pass_guard::RenderPassGuard;
+use crate::{
+    graphics_pipeline::shader_module_guard::ShaderModuleGuard, logical_device::LogicalDeviceGuard,
+};
+
+use super::{
+    frame_buffer_guard::FrameBufferGuard, render_pass_guard::RenderPassGuard,
+    swap_chain_guard::SwapChainGuard,
+};
 
 const VERTEX_SHADER_CODE: &str = "target/shaders/vert.spv";
 const FRAGMENT_SHADER_CODE: &str = "target/shaders/frag.spv";
 
-pub struct GraphicsPipeline {
+pub struct GraphicsPipelineGuard {
     _frame_buffers: Vec<FrameBufferGuard>,
     logical_device: Rc<LogicalDeviceGuard>,
     pipeline_layout: PipelineLayout,
@@ -30,7 +32,7 @@ pub struct GraphicsPipeline {
     _render_pass: Rc<RenderPassGuard>,
 }
 
-impl GraphicsPipeline {
+impl GraphicsPipelineGuard {
     pub fn try_new(
         render_pass: &Rc<RenderPassGuard>,
         subpass: u32,
@@ -132,7 +134,7 @@ impl GraphicsPipeline {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(GraphicsPipeline {
+        Ok(Self {
             _frame_buffers: frame_buffers,
             pipeline: pipelines[0],
             pipeline_layout,
@@ -142,9 +144,9 @@ impl GraphicsPipeline {
     }
 }
 
-impl Drop for GraphicsPipeline {
+impl Drop for GraphicsPipelineGuard {
     fn drop(&mut self) {
-        debug!("Dropping GraphicsPipeline");
+        debug!("Dropping GraphicsPipelineGuard");
         unsafe {
             self.logical_device.destroy_pipeline(self.pipeline, None);
             self.logical_device
