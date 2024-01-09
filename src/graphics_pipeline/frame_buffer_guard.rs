@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{ops::Deref, rc::Rc};
 
 use anyhow::Result;
 use ash::vk::{Framebuffer, FramebufferCreateInfo};
@@ -55,5 +55,13 @@ impl Drop for FrameBufferGuard {
             self.logical_device
                 .destroy_framebuffer(self.frame_buffer, None)
         }
+    }
+}
+
+impl Deref for FrameBufferGuard {
+    type Target = Framebuffer;
+
+    fn deref(&self) -> &Self::Target {
+        &self.frame_buffer
     }
 }

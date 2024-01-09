@@ -1,7 +1,9 @@
+mod command_pool;
 mod graphics_pipeline;
 mod logical_device;
 
 use anyhow::Result;
+pub use command_pool::create_command_pool;
 pub use graphics_pipeline::create_graphics_pipeline;
 pub use logical_device::create_logical_device;
 use simple_logger::{set_up_color_terminal, SimpleLogger};

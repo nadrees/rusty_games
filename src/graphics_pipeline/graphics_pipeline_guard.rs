@@ -1,4 +1,4 @@
-use std::{ffi::CString, rc::Rc};
+use std::{ffi::CString, ops::Deref, rc::Rc};
 
 use anyhow::Result;
 use ash::vk::{
@@ -25,11 +25,12 @@ const VERTEX_SHADER_CODE: &str = "target/shaders/vert.spv";
 const FRAGMENT_SHADER_CODE: &str = "target/shaders/frag.spv";
 
 pub struct GraphicsPipelineGuard {
-    _frame_buffers: Vec<FrameBufferGuard>,
+    pub frame_buffers: Vec<FrameBufferGuard>,
     logical_device: Rc<LogicalDeviceGuard>,
     pipeline_layout: PipelineLayout,
     pipeline: Pipeline,
-    _render_pass: Rc<RenderPassGuard>,
+    pub render_pass: Rc<RenderPassGuard>,
+    pub swap_chain: SwapChainGuard,
 }
 
 impl GraphicsPipelineGuard {
@@ -37,7 +38,7 @@ impl GraphicsPipelineGuard {
         render_pass: &Rc<RenderPassGuard>,
         subpass: u32,
         logical_device: &Rc<LogicalDeviceGuard>,
-        swap_chain: &SwapChainGuard,
+        swap_chain: SwapChainGuard,
     ) -> Result<Self> {
         debug!("Creating graphics pipeline...");
 
@@ -135,11 +136,12 @@ impl GraphicsPipelineGuard {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self {
-            _frame_buffers: frame_buffers,
+            frame_buffers,
             pipeline: pipelines[0],
             pipeline_layout,
             logical_device: Rc::clone(logical_device),
-            _render_pass: Rc::clone(render_pass),
+            swap_chain,
+            render_pass: Rc::clone(render_pass),
         })
     }
 }
@@ -152,5 +154,13 @@ impl Drop for GraphicsPipelineGuard {
             self.logical_device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
         }
+    }
+}
+
+impl Deref for GraphicsPipelineGuard {
+    type Target = Pipeline;
+
+    fn deref(&self) -> &Self::Target {
+        &self.pipeline
     }
 }

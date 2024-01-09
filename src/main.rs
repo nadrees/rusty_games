@@ -1,7 +1,10 @@
 use anyhow::{anyhow, Result};
 use ash::Entry;
 use glfw::fail_on_errors;
-use rusty_games::{create_graphics_pipeline, create_logical_device, init_logging};
+use rusty_games::{
+    create_command_pool, create_graphics_pipeline, create_logical_device, init_logging,
+};
+use tracing::info;
 
 const WINDOW_WIDTH: u32 = 800;
 const WINDOW_HEIGHT: u32 = 600;
@@ -25,11 +28,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let entry = Entry::linked();
     let logical_device = create_logical_device(&entry, &glfw, &window)?;
-    create_graphics_pipeline(&entry, &window, &logical_device)?;
+    let _graphics_pipeline = create_graphics_pipeline(&entry, &window, &logical_device)?;
+    let _graphics_command_pool =
+        create_command_pool(&logical_device, logical_device.graphics_queue_family_index)?;
 
     while !window.should_close() {
         glfw.wait_events();
     }
+
+    info!("Window closed, shutting down");
 
     Ok(())
 }

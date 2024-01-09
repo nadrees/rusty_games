@@ -13,10 +13,8 @@ use glfw::PWindow;
 
 use crate::logical_device::LogicalDeviceGuard;
 
-use self::{
-    graphics_pipeline_guard::GraphicsPipelineGuard, render_pass_guard::RenderPassGuard,
-    swap_chain_guard::SwapChainGuard,
-};
+pub use self::graphics_pipeline_guard::GraphicsPipelineGuard;
+use self::{render_pass_guard::RenderPassGuard, swap_chain_guard::SwapChainGuard};
 
 pub fn create_graphics_pipeline(
     entry: &Entry,
@@ -25,5 +23,5 @@ pub fn create_graphics_pipeline(
 ) -> Result<GraphicsPipelineGuard> {
     let swap_chain = SwapChainGuard::try_new(&entry, &logical_device, &window)?;
     let render_pass = RenderPassGuard::try_new(logical_device, &swap_chain)?;
-    GraphicsPipelineGuard::try_new(&render_pass, 0, logical_device, &swap_chain)
+    GraphicsPipelineGuard::try_new(&render_pass, 0, logical_device, swap_chain)
 }
