@@ -99,6 +99,7 @@ impl Drop for CommandPoolGuard {
     }
 }
 
+#[inline]
 const fn clear_color() -> ClearValue {
     ClearValue {
         color: ClearColorValue {
