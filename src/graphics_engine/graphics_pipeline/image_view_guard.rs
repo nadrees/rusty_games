@@ -7,7 +7,7 @@ use ash::vk::{
 };
 use tracing::debug;
 
-use crate::logical_device::LogicalDeviceGuard;
+use super::LogicalDeviceGuard;
 
 pub struct ImageViewGuard {
     _image: Image,

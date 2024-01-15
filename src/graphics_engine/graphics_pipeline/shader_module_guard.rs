@@ -4,7 +4,7 @@ use anyhow::Result;
 use ash::vk::{ShaderModule, ShaderModuleCreateInfo};
 use tracing::debug;
 
-use crate::logical_device::LogicalDeviceGuard;
+use super::LogicalDeviceGuard;
 
 pub struct ShaderModuleGuard {
     shader_module: ShaderModule,

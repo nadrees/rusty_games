@@ -7,9 +7,7 @@ use ash::vk::{
 };
 use tracing::debug;
 
-use crate::logical_device::LogicalDeviceGuard;
-
-use super::swap_chain_guard::SwapChainGuard;
+use super::{swap_chain_guard::SwapChainGuard, LogicalDeviceGuard};
 
 pub struct RenderPassGuard {
     render_pass: RenderPass,

@@ -7,7 +7,7 @@ use ash::{
 };
 use tracing::debug;
 
-use crate::logical_device::queue_families::find_queue_families;
+use crate::graphics_engine::logical_device::queue_families::find_queue_families;
 
 use super::{instance_guard::InstanceGuard, surface_guard::SurfaceGuard};
 

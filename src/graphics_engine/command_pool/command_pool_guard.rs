@@ -3,12 +3,18 @@ use std::rc::Rc;
 use anyhow::Result;
 use ash::vk::{
     ClearColorValue, ClearValue, CommandBuffer, CommandBufferAllocateInfo, CommandBufferBeginInfo,
-    CommandBufferLevel, CommandPool, CommandPoolCreateFlags, CommandPoolCreateInfo, Offset2D,
-    PipelineBindPoint, Rect2D, RenderPassBeginInfo, SubpassContents,
+    CommandBufferLevel, CommandBufferResetFlags, CommandPool, CommandPoolCreateFlags,
+    CommandPoolCreateInfo, Offset2D, PipelineBindPoint, PipelineStageFlags, Queue, Rect2D,
+    RenderPassBeginInfo, SubmitInfo, SubpassContents,
 };
 use tracing::debug;
 
-use crate::{graphics_pipeline::GraphicsPipelineGuard, logical_device::LogicalDeviceGuard};
+use crate::graphics_engine::{
+    fence_guard::FenceGuard, graphics_pipeline::GraphicsPipelineGuard,
+    semaphore_guard::SemaphoreGuard,
+};
+
+use super::LogicalDeviceGuard;
 
 pub struct CommandPoolGuard {
     command_buffer: CommandBuffer,
@@ -50,6 +56,11 @@ impl CommandPoolGuard {
         graphics_pipeline: &GraphicsPipelineGuard,
         frame_index: usize,
     ) -> Result<()> {
+        unsafe {
+            self.logical_device
+                .reset_command_buffer(self.command_buffer, CommandBufferResetFlags::empty())
+        }?;
+
         let command_buffer_begin_info = CommandBufferBeginInfo::builder();
         unsafe {
             self.logical_device
@@ -84,6 +95,48 @@ impl CommandPoolGuard {
             self.logical_device
                 .end_command_buffer(self.command_buffer)?;
         };
+
+        Ok(())
+    }
+
+    pub fn submit_command_buffer(
+        &self,
+        queue: Queue,
+        singal_semaphores: Vec<&SemaphoreGuard>,
+        signal_fence: &FenceGuard,
+        wait_semaphores_and_stages: Vec<(&SemaphoreGuard, PipelineStageFlags)>,
+    ) -> Result<()> {
+        let command_buffers = [self.command_buffer];
+
+        let signal_semaphores = singal_semaphores
+            .into_iter()
+            .map(|s| **s)
+            .collect::<Vec<_>>();
+        let signal_semaphores_ref = &signal_semaphores[..];
+
+        let wait_semaphores = wait_semaphores_and_stages
+            .iter()
+            .map(|s| **s.0)
+            .collect::<Vec<_>>();
+        let wait_semaphores_ref = &wait_semaphores[..];
+
+        let wait_stages = wait_semaphores_and_stages
+            .into_iter()
+            .map(|s| s.1)
+            .collect::<Vec<_>>();
+        let wait_stages_ref = &wait_stages[..];
+
+        let submits = &[SubmitInfo::builder()
+            .command_buffers(&command_buffers)
+            .signal_semaphores(signal_semaphores_ref)
+            .wait_dst_stage_mask(wait_stages_ref)
+            .wait_semaphores(wait_semaphores_ref)
+            .build()];
+
+        unsafe {
+            self.logical_device
+                .queue_submit(queue, submits, **signal_fence)
+        }?;
 
         Ok(())
     }

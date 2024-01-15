@@ -4,9 +4,9 @@ use std::rc::Rc;
 
 use anyhow::Result;
 
-use crate::logical_device::LogicalDeviceGuard;
+use super::LogicalDeviceGuard;
 
-use self::command_pool_guard::CommandPoolGuard;
+pub use self::command_pool_guard::CommandPoolGuard;
 
 pub fn create_command_pool(
     logical_device: &Rc<LogicalDeviceGuard>,

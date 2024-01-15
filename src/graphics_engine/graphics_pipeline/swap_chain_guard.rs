@@ -1,21 +1,25 @@
-use std::{ffi::c_uint, rc::Rc};
+use std::{ffi::c_uint, ops::Deref, rc::Rc};
 
 use ash::{
     extensions::khr::Swapchain,
     vk::{
-        ColorSpaceKHR, CompositeAlphaFlagsKHR, Extent2D, Format, ImageUsageFlags, PresentModeKHR,
-        SharingMode, SurfaceCapabilitiesKHR, SurfaceFormatKHR, SwapchainCreateInfoKHR,
-        SwapchainKHR,
+        ColorSpaceKHR, CompositeAlphaFlagsKHR, Extent2D, Fence, Format, ImageUsageFlags,
+        PresentModeKHR, Semaphore, SharingMode, SurfaceCapabilitiesKHR, SurfaceFormatKHR,
+        SwapchainCreateInfoKHR, SwapchainKHR,
     },
     Entry,
 };
 use glfw::PWindow;
 use tracing::debug;
 
-use crate::logical_device::{query_swap_chain_support, LogicalDeviceGuard};
 use anyhow::Result;
 
-use super::image_view_guard::ImageViewGuard;
+use crate::graphics_engine::{
+    fence_guard::FenceGuard, logical_device::query_swap_chain_support,
+    semaphore_guard::SemaphoreGuard,
+};
+
+use super::{image_view_guard::ImageViewGuard, LogicalDeviceGuard};
 
 pub struct SwapChainGuard {
     handle: SwapchainKHR,
@@ -95,6 +99,27 @@ impl SwapChainGuard {
 
     pub fn get_images(&self) -> Vec<&Rc<ImageViewGuard>> {
         self.image_views.iter().collect()
+    }
+
+    pub fn get_next_image_index(
+        &self,
+        timeout: u64,
+        semaphore: Option<&SemaphoreGuard>,
+        fence: Option<&FenceGuard>,
+    ) -> Result<usize> {
+        let semaphore = match semaphore {
+            Some(semaphore) => **semaphore,
+            None => Semaphore::null(),
+        };
+        let fence = match fence {
+            Some(fence) => **fence,
+            None => Fence::null(),
+        };
+        let result = unsafe {
+            self.swapchain
+                .acquire_next_image(self.handle, timeout, semaphore, fence)
+        }?;
+        Ok(result.0.try_into().unwrap())
     }
 }
 

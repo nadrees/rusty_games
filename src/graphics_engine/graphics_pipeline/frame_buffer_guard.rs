@@ -4,11 +4,9 @@ use anyhow::Result;
 use ash::vk::{Framebuffer, FramebufferCreateInfo};
 use tracing::debug;
 
-use crate::logical_device::LogicalDeviceGuard;
-
 use super::{
     image_view_guard::ImageViewGuard, render_pass_guard::RenderPassGuard,
-    swap_chain_guard::SwapChainGuard,
+    swap_chain_guard::SwapChainGuard, LogicalDeviceGuard,
 };
 
 pub struct FrameBufferGuard {

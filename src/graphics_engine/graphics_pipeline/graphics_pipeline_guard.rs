@@ -12,9 +12,7 @@ use ash::vk::{
 };
 use tracing::debug;
 
-use crate::{
-    graphics_pipeline::shader_module_guard::ShaderModuleGuard, logical_device::LogicalDeviceGuard,
-};
+use super::{shader_module_guard::ShaderModuleGuard, LogicalDeviceGuard};
 
 use super::{
     frame_buffer_guard::FrameBufferGuard, render_pass_guard::RenderPassGuard,

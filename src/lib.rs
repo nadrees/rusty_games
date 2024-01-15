@@ -1,11 +1,7 @@
-mod command_pool;
-mod graphics_pipeline;
-mod logical_device;
+mod graphics_engine;
 
 use anyhow::Result;
-pub use command_pool::create_command_pool;
-pub use graphics_pipeline::create_graphics_pipeline;
-pub use logical_device::create_logical_device;
+pub use graphics_engine::create_graphics_engine;
 use simple_logger::{set_up_color_terminal, SimpleLogger};
 
 pub fn init_logging() -> Result<()> {

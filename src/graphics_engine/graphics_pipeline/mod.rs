@@ -11,7 +11,7 @@ use anyhow::Result;
 use ash::Entry;
 use glfw::PWindow;
 
-use crate::logical_device::LogicalDeviceGuard;
+use super::LogicalDeviceGuard;
 
 pub use self::graphics_pipeline_guard::GraphicsPipelineGuard;
 use self::{render_pass_guard::RenderPassGuard, swap_chain_guard::SwapChainGuard};
