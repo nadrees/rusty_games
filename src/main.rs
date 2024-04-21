@@ -3,11 +3,12 @@ use std::ffi::{c_char, CStr, CString};
 use anyhow::{anyhow, ensure, Result};
 use ash::{
     ext::debug_utils,
+    khr::surface,
     vk::{
         make_api_version, ApplicationInfo, DebugUtilsMessageSeverityFlagsEXT,
         DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT,
         DeviceCreateInfo, DeviceQueueCreateInfo, InstanceCreateInfo, PhysicalDevice,
-        PhysicalDeviceFeatures, Queue, QueueFlags, API_VERSION_1_3,
+        PhysicalDeviceFeatures, Queue, QueueFlags, SurfaceKHR, API_VERSION_1_3,
     },
     Device, Entry, Instance,
 };
@@ -17,7 +18,7 @@ use winit::{
     dpi::PhysicalSize,
     event::{Event, WindowEvent},
     event_loop::EventLoop,
-    raw_window_handle::HasDisplayHandle,
+    raw_window_handle::{HasDisplayHandle, HasWindowHandle},
     window::{Window, WindowBuilder},
 };
 
@@ -42,7 +43,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 struct App {
-    queues: QueueHandles,
+    /// Handles to the queues for submitting instructions to
+    _queues: QueueHandles,
     /// The logical device for interfacing with the
     /// physical hardware
     device: Device,
@@ -50,7 +52,10 @@ struct App {
     debug_utils: Option<DebugUtilsExt>,
     /// The instance for interacting with Vulkan core
     instance: Instance,
+    /// The actual window presented to the user
     window: Window,
+    surface_manager: SurfaceManager,
+    entry: Entry,
 }
 
 impl App {
@@ -59,24 +64,32 @@ impl App {
             ash_window::enumerate_required_extensions(event_loop.display_handle()?.as_raw())?;
 
         let window = Self::init_window(&event_loop)?;
-        let (instance, debug_utils, device, queues) = Self::init_vulkan(required_extensions)?;
+        let (entry, instance, debug_utils, device, queues, surface_manager) =
+            Self::init_vulkan(required_extensions)?;
 
         Ok(Self {
+            entry,
             debug_utils,
             device,
-            queues,
+            _queues: queues,
             instance,
             window,
+            surface_manager,
         })
     }
 
     pub fn run(&mut self, event_loop: EventLoop<()>) -> Result<()> {
+        self.surface_manager
+            .create_surface(&self.entry, &self.instance, &self.window)?;
         event_loop.run(move |event, elwp| match event {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 window_id: _,
             } => {
                 elwp.exit();
+            }
+            Event::LoopExiting => {
+                self.surface_manager.destroy_surface();
             }
             _ => {}
         })?;
@@ -97,16 +110,39 @@ impl App {
     /// Initalizes Vulkan
     fn init_vulkan(
         required_extensions: &[*const c_char],
-    ) -> Result<(Instance, Option<DebugUtilsExt>, Device, QueueHandles)> {
+    ) -> Result<(
+        Entry,
+        Instance,
+        Option<DebugUtilsExt>,
+        Device,
+        QueueHandles,
+        SurfaceManager,
+    )> {
         let entry = Entry::linked();
 
         let instance = Self::create_instance(&entry, required_extensions)?;
         let debug_utils = Self::setup_debug_messenger(&entry, &instance)?;
+        let surface_manager = Self::create_surface_manager(&entry, &instance);
         let physical_device = Self::pick_physical_device(&instance)?;
         let (logical_device, queue_handles) =
             Self::create_logical_device(&instance, &physical_device)?;
 
-        Ok((instance, debug_utils, logical_device, queue_handles))
+        Ok((
+            entry,
+            instance,
+            debug_utils,
+            logical_device,
+            queue_handles,
+            surface_manager,
+        ))
+    }
+
+    fn create_surface_manager(entry: &Entry, instance: &Instance) -> SurfaceManager {
+        let surface_fn = surface::Instance::new(entry, instance);
+        SurfaceManager {
+            surface_fn,
+            surface: None,
+        }
     }
 
     /// Creates the logical device to interface with the selected physical device. Each queue family
@@ -135,7 +171,7 @@ impl App {
         let graphics_queue_handle =
             unsafe { logical_device.get_device_queue(indicies.graphics_family.unwrap() as u32, 0) };
         let queue_handles = QueueHandles {
-            graphics: graphics_queue_handle,
+            _graphics: graphics_queue_handle,
         };
 
         Ok((logical_device, queue_handles))
@@ -326,5 +362,45 @@ impl QueueFamilyIndicies {
 /// Holds handles to the queues created as part of the logical
 /// device initialization.
 struct QueueHandles {
-    graphics: Queue,
+    _graphics: Queue,
+}
+
+/// Struct for creating and managing surfaces
+struct SurfaceManager {
+    surface_fn: surface::Instance,
+    surface: Option<SurfaceKHR>,
+}
+
+impl SurfaceManager {
+    pub fn create_surface(
+        &mut self,
+        entry: &Entry,
+        instance: &Instance,
+        window: &Window,
+    ) -> Result<()> {
+        ensure!(
+            self.surface.is_none(),
+            "Cannot create a new surface, one already exists!"
+        );
+        let surface = unsafe {
+            ash_window::create_surface(
+                entry,
+                instance,
+                window.display_handle()?.as_raw(),
+                window.window_handle()?.as_raw(),
+                None,
+            )?
+        };
+        trace!("Surface created");
+        self.surface = Some(surface);
+        Ok(())
+    }
+
+    pub fn destroy_surface(&mut self) {
+        if let Some(surface) = self.surface.take() {
+            unsafe { self.surface_fn.destroy_surface(surface, None) };
+            trace!("Surface destroyed");
+            self.surface = None;
+        }
+    }
 }
