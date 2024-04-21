@@ -1,4 +1,7 @@
-use std::ffi::{c_char, CStr, CString};
+use std::{
+    collections::HashSet,
+    ffi::{c_char, CStr, CString},
+};
 
 use anyhow::{anyhow, ensure, Result};
 use ash::{
@@ -53,9 +56,13 @@ struct App {
     /// The instance for interacting with Vulkan core
     instance: Instance,
     /// The actual window presented to the user
-    window: Window,
+    /// Need to keep a reference to this for the life
+    /// off the app or it will get cleaned up
+    _window: Window,
+    /// See surface manager struct docs
     surface_manager: SurfaceManager,
-    entry: Entry,
+    /// The linkage to the DLL for vulkan
+    _entry: Entry,
 }
 
 impl App {
@@ -65,22 +72,20 @@ impl App {
 
         let window = Self::init_window(&event_loop)?;
         let (entry, instance, debug_utils, device, queues, surface_manager) =
-            Self::init_vulkan(required_extensions)?;
+            Self::init_vulkan(required_extensions, &window)?;
 
         Ok(Self {
-            entry,
+            _entry: entry,
             debug_utils,
             device,
             _queues: queues,
             instance,
-            window,
+            _window: window,
             surface_manager,
         })
     }
 
     pub fn run(&mut self, event_loop: EventLoop<()>) -> Result<()> {
-        self.surface_manager
-            .create_surface(&self.entry, &self.instance, &self.window)?;
         event_loop.run(move |event, elwp| match event {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
@@ -110,6 +115,7 @@ impl App {
     /// Initalizes Vulkan
     fn init_vulkan(
         required_extensions: &[*const c_char],
+        window: &Window,
     ) -> Result<(
         Entry,
         Instance,
@@ -122,10 +128,10 @@ impl App {
 
         let instance = Self::create_instance(&entry, required_extensions)?;
         let debug_utils = Self::setup_debug_messenger(&entry, &instance)?;
-        let surface_manager = Self::create_surface_manager(&entry, &instance);
-        let physical_device = Self::pick_physical_device(&instance)?;
+        let surface_manager = Self::create_surface_manager(&entry, &instance, &window)?;
+        let physical_device = Self::pick_physical_device(&instance, &surface_manager)?;
         let (logical_device, queue_handles) =
-            Self::create_logical_device(&instance, &physical_device)?;
+            Self::create_logical_device(&instance, &physical_device, &surface_manager)?;
 
         Ok((
             entry,
@@ -137,12 +143,18 @@ impl App {
         ))
     }
 
-    fn create_surface_manager(entry: &Entry, instance: &Instance) -> SurfaceManager {
+    fn create_surface_manager(
+        entry: &Entry,
+        instance: &Instance,
+        window: &Window,
+    ) -> Result<SurfaceManager> {
         let surface_fn = surface::Instance::new(entry, instance);
-        SurfaceManager {
+        let mut surface_manager = SurfaceManager {
             surface_fn,
             surface: None,
-        }
+        };
+        surface_manager.create_surface(entry, instance, window)?;
+        Ok(surface_manager)
     }
 
     /// Creates the logical device to interface with the selected physical device. Each queue family
@@ -150,19 +162,30 @@ impl App {
     fn create_logical_device(
         instance: &Instance,
         physical_device: &PhysicalDevice,
+        surface_manager: &SurfaceManager,
     ) -> Result<(Device, QueueHandles)> {
-        let indicies = Self::find_queue_families(instance, physical_device);
+        let indicies = Self::find_queue_families(instance, physical_device, surface_manager);
         ensure!(indicies.is_complete());
 
+        let unique_queue_family_indicies = HashSet::from([
+            indicies.graphics_family.unwrap() as u32,
+            indicies.present_family.unwrap() as u32,
+        ]);
+
         let queue_priorities = [1.0f32];
-        let device_queue_creation_info = [DeviceQueueCreateInfo::default()
-            .queue_family_index(indicies.graphics_family.unwrap() as u32)
-            .queue_priorities(&queue_priorities)];
+        let device_queue_creation_infos = unique_queue_family_indicies
+            .into_iter()
+            .map(|queue_family_index| {
+                DeviceQueueCreateInfo::default()
+                    .queue_family_index(queue_family_index)
+                    .queue_priorities(&queue_priorities)
+            })
+            .collect::<Vec<_>>();
 
         let physical_device_features = PhysicalDeviceFeatures::default();
 
         let device_create_info = DeviceCreateInfo::default()
-            .queue_create_infos(&device_queue_creation_info)
+            .queue_create_infos(&device_queue_creation_infos)
             .enabled_features(&physical_device_features);
 
         let logical_device =
@@ -170,8 +193,11 @@ impl App {
 
         let graphics_queue_handle =
             unsafe { logical_device.get_device_queue(indicies.graphics_family.unwrap() as u32, 0) };
+        let present_queue_handle =
+            unsafe { logical_device.get_device_queue(indicies.present_family.unwrap() as u32, 0) };
         let queue_handles = QueueHandles {
             _graphics: graphics_queue_handle,
+            _present: present_queue_handle,
         };
 
         Ok((logical_device, queue_handles))
@@ -181,23 +207,42 @@ impl App {
     fn find_queue_families(
         instance: &Instance,
         physical_device: &PhysicalDevice,
+        surface_manager: &SurfaceManager,
     ) -> QueueFamilyIndicies {
         let queue_family_properties =
             unsafe { instance.get_physical_device_queue_family_properties(*physical_device) };
+        // let physical_device_present_support = surface.get_physical_device_surface_support(*physical_device, queue_family_index, surface)
         QueueFamilyIndicies {
             _physical_device: *physical_device,
             graphics_family: queue_family_properties
                 .iter()
                 .position(|qfp| qfp.queue_flags.contains(QueueFlags::GRAPHICS)),
+            present_family: queue_family_properties.iter().enumerate().position(
+                |(idx, _)| unsafe {
+                    surface_manager
+                        .surface_fn
+                        .get_physical_device_surface_support(
+                            *physical_device,
+                            idx as u32,
+                            surface_manager.surface.unwrap(),
+                        )
+                        .unwrap_or_default()
+                },
+            ),
         }
     }
 
     /// Queries the system for the available physical devices, and picks the most appropriate one for use.
-    fn pick_physical_device(instance: &Instance) -> Result<PhysicalDevice> {
+    fn pick_physical_device(
+        instance: &Instance,
+        surface_manager: &SurfaceManager,
+    ) -> Result<PhysicalDevice> {
         let physical_devices = unsafe { instance.enumerate_physical_devices()? };
         let physical_device = physical_devices
             .into_iter()
-            .find(|physical_device| Self::is_device_suitable(&instance, physical_device))
+            .find(|physical_device| {
+                Self::is_device_suitable(&instance, physical_device, surface_manager)
+            })
             .ok_or_else(|| anyhow!("Could not find a suitable physical device!"))?;
         let physical_device_props =
             unsafe { instance.get_physical_device_properties(physical_device) };
@@ -208,8 +253,12 @@ impl App {
     }
 
     /// Returns if the specified physical device is suitable for use for this application.
-    fn is_device_suitable(instance: &Instance, physical_device: &PhysicalDevice) -> bool {
-        let indicies = Self::find_queue_families(instance, physical_device);
+    fn is_device_suitable(
+        instance: &Instance,
+        physical_device: &PhysicalDevice,
+        surface_manager: &SurfaceManager,
+    ) -> bool {
+        let indicies = Self::find_queue_families(instance, physical_device, surface_manager);
         indicies.is_complete()
     }
 
@@ -349,13 +398,14 @@ struct QueueFamilyIndicies {
     _physical_device: PhysicalDevice,
     /// The graphics queue family index, if one is available
     graphics_family: Option<usize>,
+    present_family: Option<usize>,
 }
 
 impl QueueFamilyIndicies {
     /// True if all queue families are available for this physical
     /// device.
     pub fn is_complete(&self) -> bool {
-        self.graphics_family.is_some()
+        self.graphics_family.is_some() && self.present_family.is_some()
     }
 }
 
@@ -363,6 +413,7 @@ impl QueueFamilyIndicies {
 /// device initialization.
 struct QueueHandles {
     _graphics: Queue,
+    _present: Queue,
 }
 
 /// Struct for creating and managing surfaces
