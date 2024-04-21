@@ -9,7 +9,7 @@ use ash::{
         DeviceCreateInfo, DeviceQueueCreateInfo, InstanceCreateInfo, PhysicalDevice,
         PhysicalDeviceFeatures, QueueFlags, API_VERSION_1_3,
     },
-    Entry, Instance,
+    Device, Entry, Instance,
 };
 use glfw::{fail_on_errors, Glfw, PWindow};
 use rusty_games::{init_logging, vulkan_debug_utils_callback};
@@ -35,7 +35,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 struct App {
+    /// The logical device for interfacing with the
+    /// physical hardware
+    device: Device,
+    /// The debug utils extension, if enabled
     debug_utils: Option<DebugUtilsExt>,
+    /// The instance for interacting with Vulkan core
     instance: Instance,
     // window must be dropped before glfw is,
     // do not move it before window in this list
@@ -46,10 +51,11 @@ struct App {
 impl App {
     pub fn new() -> Result<Self> {
         let (glfw, window) = Self::init_window()?;
-        let (instance, debug_utils) = Self::init_vulkan(&glfw)?;
+        let (instance, debug_utils, device) = Self::init_vulkan(&glfw)?;
 
         Ok(Self {
             debug_utils,
+            device,
             glfw,
             instance,
             window,
@@ -79,20 +85,23 @@ impl App {
     }
 
     /// Initalizes Vulkan
-    fn init_vulkan(glfw: &Glfw) -> Result<(Instance, Option<DebugUtilsExt>)> {
+    fn init_vulkan(glfw: &Glfw) -> Result<(Instance, Option<DebugUtilsExt>, Device)> {
         let entry = Entry::linked();
 
         let instance = Self::create_instance(&entry, &glfw)?;
         let debug_utils = Self::setup_debug_messenger(&entry, &instance)?;
         let physical_device = Self::pick_physical_device(&instance)?;
-        Self::create_logical_device(&instance, &physical_device)?;
+        let logical_device = Self::create_logical_device(&instance, &physical_device)?;
 
-        Ok((instance, debug_utils))
+        Ok((instance, debug_utils, logical_device))
     }
 
     /// Creates the logical device to interface with the selected physical device. Each queue family
     /// will create 1 queue instance for submitting commands to.
-    fn create_logical_device(instance: &Instance, physical_device: &PhysicalDevice) -> Result<()> {
+    fn create_logical_device(
+        instance: &Instance,
+        physical_device: &PhysicalDevice,
+    ) -> Result<Device> {
         let indicies = Self::find_queue_families(instance, physical_device);
         ensure!(indicies.is_complete());
 
@@ -103,10 +112,13 @@ impl App {
 
         let physical_device_features = PhysicalDeviceFeatures::default();
 
-        let device_create_info =
-            DeviceCreateInfo::default().queue_create_infos(&device_queue_creation_info);
+        let device_create_info = DeviceCreateInfo::default()
+            .queue_create_infos(&device_queue_creation_info)
+            .enabled_features(&physical_device_features);
 
-        Ok(())
+        let logical_device =
+            unsafe { instance.create_device(*physical_device, &device_create_info, None) }?;
+        Ok(logical_device)
     }
 
     /// Queries the Queue Families the physica device supports, and records the index of the relevant ones.
@@ -280,6 +292,7 @@ impl Drop for App {
         }
 
         unsafe {
+            self.device.destroy_device(None);
             self.instance.destroy_instance(None);
         }
     }
