@@ -11,7 +11,8 @@ use ash::{
         make_api_version, ApplicationInfo, DebugUtilsMessageSeverityFlagsEXT,
         DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT,
         DeviceCreateInfo, DeviceQueueCreateInfo, InstanceCreateInfo, PhysicalDevice,
-        PhysicalDeviceFeatures, Queue, QueueFlags, SurfaceKHR, API_VERSION_1_3,
+        PhysicalDeviceFeatures, PresentModeKHR, Queue, QueueFlags, SurfaceCapabilitiesKHR,
+        SurfaceFormatKHR, SurfaceKHR, API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
     },
     Device, Entry, Instance,
 };
@@ -26,6 +27,7 @@ use winit::{
 };
 
 const API_VERSION: u32 = API_VERSION_1_3;
+const REQUIRED_DEVICE_EXTENSIONS: &[&CStr] = &[KHR_SWAPCHAIN_NAME];
 const WINDOW_WIDTH: u32 = 800;
 const WINDOW_HEIGHT: u32 = 600;
 const WINDOW_TITLE: &str = "Hello, Triangle";
@@ -143,6 +145,45 @@ impl App {
         ))
     }
 
+    /// Queries for the details of what the swap chain supports given
+    /// the physical device and surface
+    fn query_swap_chain_support(
+        physical_device: &PhysicalDevice,
+        surface_manager: &SurfaceManager,
+    ) -> Result<SwapChainSupportDetails> {
+        let capabilities = unsafe {
+            surface_manager
+                .surface_fn
+                .get_physical_device_surface_capabilities(
+                    *physical_device,
+                    surface_manager.surface.unwrap(),
+                )?
+        };
+        let formats = unsafe {
+            surface_manager
+                .surface_fn
+                .get_physical_device_surface_formats(
+                    *physical_device,
+                    surface_manager.surface.unwrap(),
+                )?
+        };
+        let present_modes = unsafe {
+            surface_manager
+                .surface_fn
+                .get_physical_device_surface_present_modes(
+                    *physical_device,
+                    surface_manager.surface.unwrap(),
+                )?
+        };
+
+        Ok(SwapChainSupportDetails {
+            capabilities,
+            formats,
+            present_modes,
+        })
+    }
+
+    /// Creates a manager that can create and destroy surfaces to be rendered to
     fn create_surface_manager(
         entry: &Entry,
         instance: &Instance,
@@ -184,9 +225,15 @@ impl App {
 
         let physical_device_features = PhysicalDeviceFeatures::default();
 
+        let extension_names = REQUIRED_DEVICE_EXTENSIONS
+            .iter()
+            .map(|extension_name| (**extension_name).as_ptr())
+            .collect::<Vec<_>>();
+
         let device_create_info = DeviceCreateInfo::default()
             .queue_create_infos(&device_queue_creation_infos)
-            .enabled_features(&physical_device_features);
+            .enabled_features(&physical_device_features)
+            .enabled_extension_names(&extension_names);
 
         let logical_device =
             unsafe { instance.create_device(*physical_device, &device_create_info, None) }?;
@@ -238,17 +285,15 @@ impl App {
         surface_manager: &SurfaceManager,
     ) -> Result<PhysicalDevice> {
         let physical_devices = unsafe { instance.enumerate_physical_devices()? };
-        let physical_device = physical_devices
-            .into_iter()
-            .find(|physical_device| {
-                Self::is_device_suitable(&instance, physical_device, surface_manager)
-            })
-            .ok_or_else(|| anyhow!("Could not find a suitable physical device!"))?;
-        let physical_device_props =
-            unsafe { instance.get_physical_device_properties(physical_device) };
-        trace!("Picked device {:?}", unsafe {
-            CStr::from_ptr(physical_device_props.device_name.as_ptr())
-        });
+        let mut physical_device = None;
+        for pd in physical_devices {
+            if Self::is_device_suitable(instance, &pd, surface_manager)? {
+                physical_device = Some(pd);
+                break;
+            }
+        }
+        let physical_device =
+            physical_device.ok_or_else(|| anyhow!("Could not find a suitable physical device!"))?;
         return Ok(physical_device);
     }
 
@@ -257,9 +302,43 @@ impl App {
         instance: &Instance,
         physical_device: &PhysicalDevice,
         surface_manager: &SurfaceManager,
-    ) -> bool {
+    ) -> Result<bool> {
         let indicies = Self::find_queue_families(instance, physical_device, surface_manager);
-        indicies.is_complete()
+        let supports_extensions =
+            Self::check_device_extensions_supported(instance, physical_device)?;
+
+        let mut swap_chain_supported = false;
+        if supports_extensions {
+            let swap_chain_support =
+                Self::query_swap_chain_support(physical_device, surface_manager)?;
+            swap_chain_supported = !swap_chain_support.formats.is_empty()
+                && !swap_chain_support.present_modes.is_empty();
+        }
+
+        Ok(indicies.is_complete() && supports_extensions && swap_chain_supported)
+    }
+
+    /// Checks to see if the physical device supports all required device extensions
+    fn check_device_extensions_supported(
+        instance: &Instance,
+        physical_device: &PhysicalDevice,
+    ) -> Result<bool> {
+        let device_extension_properties =
+            unsafe { instance.enumerate_device_extension_properties(*physical_device)? };
+
+        let mut device_extension_names = HashSet::new();
+        for device_extension in device_extension_properties {
+            let extension_name = device_extension.extension_name_as_c_str()?;
+            device_extension_names.insert(extension_name.to_owned());
+        }
+
+        for required_extension in REQUIRED_DEVICE_EXTENSIONS {
+            let required_extension_name: CString = (*required_extension).to_owned();
+            if !device_extension_names.contains(&required_extension_name) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Creates an Instance to interact with the core of Vulkan. Registers the needed extensions and
@@ -454,4 +533,12 @@ impl SurfaceManager {
             self.surface = None;
         }
     }
+}
+
+/// Details about what features the swap chain supports
+/// for a given surface
+struct SwapChainSupportDetails {
+    capabilities: SurfaceCapabilitiesKHR,
+    formats: Vec<SurfaceFormatKHR>,
+    present_modes: Vec<PresentModeKHR>,
 }
