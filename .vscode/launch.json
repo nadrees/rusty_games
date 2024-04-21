@@ -1,64 +1,60 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug unit tests in library 'rusty_games'",
-            "cargo": {
-                "args": [
-                    "test",
-                    "--no-run",
-                    "--lib",
-                    "--package=rusty_games"
-                ],
-                "filter": {
-                    "name": "rusty_games",
-                    "kind": "lib"
-                }
-            },
-            "args": [],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug executable 'rusty_games'",
-            "cargo": {
-                "args": [
-                    "build",
-                    "--bin=rusty_games",
-                    "--package=rusty_games"
-                ],
-                "filter": {
-                    "name": "rusty_games",
-                    "kind": "bin"
-                }
-            },
-            "args": [],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug unit tests in executable 'rusty_games'",
-            "cargo": {
-                "args": [
-                    "test",
-                    "--no-run",
-                    "--bin=rusty_games",
-                    "--package=rusty_games"
-                ],
-                "filter": {
-                    "name": "rusty_games",
-                    "kind": "bin"
-                }
-            },
-            "args": [],
-            "cwd": "${workspaceFolder}"
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in library 'rusty_games'",
+      "cargo": {
+        "args": ["test", "--no-run", "--lib", "--package=rusty_games"],
+        "filter": {
+          "name": "rusty_games",
+          "kind": "lib"
         }
-    ]
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug executable 'rusty_games'",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=rusty_games",
+          "--package=rusty_games",
+          "--features=enable_validations"
+        ],
+        "filter": {
+          "name": "rusty_games",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in executable 'rusty_games'",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--bin=rusty_games",
+          "--package=rusty_games"
+        ],
+        "filter": {
+          "name": "rusty_games",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    }
+  ]
 }
