@@ -7,7 +7,7 @@ use ash::{
         make_api_version, ApplicationInfo, DebugUtilsMessageSeverityFlagsEXT,
         DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT,
         DeviceCreateInfo, DeviceQueueCreateInfo, InstanceCreateInfo, PhysicalDevice,
-        PhysicalDeviceFeatures, QueueFlags, API_VERSION_1_3,
+        PhysicalDeviceFeatures, Queue, QueueFlags, API_VERSION_1_3,
     },
     Device, Entry, Instance,
 };
@@ -35,6 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 struct App {
+    queues: QueueHandles,
     /// The logical device for interfacing with the
     /// physical hardware
     device: Device,
@@ -51,11 +52,12 @@ struct App {
 impl App {
     pub fn new() -> Result<Self> {
         let (glfw, window) = Self::init_window()?;
-        let (instance, debug_utils, device) = Self::init_vulkan(&glfw)?;
+        let (instance, debug_utils, device, queues) = Self::init_vulkan(&glfw)?;
 
         Ok(Self {
             debug_utils,
             device,
+            queues,
             glfw,
             instance,
             window,
@@ -85,15 +87,16 @@ impl App {
     }
 
     /// Initalizes Vulkan
-    fn init_vulkan(glfw: &Glfw) -> Result<(Instance, Option<DebugUtilsExt>, Device)> {
+    fn init_vulkan(glfw: &Glfw) -> Result<(Instance, Option<DebugUtilsExt>, Device, QueueHandles)> {
         let entry = Entry::linked();
 
         let instance = Self::create_instance(&entry, &glfw)?;
         let debug_utils = Self::setup_debug_messenger(&entry, &instance)?;
         let physical_device = Self::pick_physical_device(&instance)?;
-        let logical_device = Self::create_logical_device(&instance, &physical_device)?;
+        let (logical_device, queue_handles) =
+            Self::create_logical_device(&instance, &physical_device)?;
 
-        Ok((instance, debug_utils, logical_device))
+        Ok((instance, debug_utils, logical_device, queue_handles))
     }
 
     /// Creates the logical device to interface with the selected physical device. Each queue family
@@ -101,7 +104,7 @@ impl App {
     fn create_logical_device(
         instance: &Instance,
         physical_device: &PhysicalDevice,
-    ) -> Result<Device> {
+    ) -> Result<(Device, QueueHandles)> {
         let indicies = Self::find_queue_families(instance, physical_device);
         ensure!(indicies.is_complete());
 
@@ -118,7 +121,14 @@ impl App {
 
         let logical_device =
             unsafe { instance.create_device(*physical_device, &device_create_info, None) }?;
-        Ok(logical_device)
+
+        let graphics_queue_handle =
+            unsafe { logical_device.get_device_queue(indicies.graphics_family.unwrap() as u32, 0) };
+        let queue_handles = QueueHandles {
+            graphics: graphics_queue_handle,
+        };
+
+        Ok((logical_device, queue_handles))
     }
 
     /// Queries the Queue Families the physica device supports, and records the index of the relevant ones.
@@ -321,4 +331,10 @@ impl QueueFamilyIndicies {
     pub fn is_complete(&self) -> bool {
         self.graphics_family.is_some()
     }
+}
+
+/// Holds handles to the queues created as part of the logical
+/// device initialization.
+struct QueueHandles {
+    graphics: Queue,
 }
