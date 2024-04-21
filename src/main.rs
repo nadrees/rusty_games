@@ -6,13 +6,15 @@ use std::{
 use anyhow::{anyhow, ensure, Result};
 use ash::{
     ext::debug_utils,
-    khr::surface,
+    khr::{surface, swapchain},
     vk::{
-        make_api_version, ApplicationInfo, DebugUtilsMessageSeverityFlagsEXT,
-        DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT,
-        DeviceCreateInfo, DeviceQueueCreateInfo, InstanceCreateInfo, PhysicalDevice,
-        PhysicalDeviceFeatures, PresentModeKHR, Queue, QueueFlags, SurfaceCapabilitiesKHR,
-        SurfaceFormatKHR, SurfaceKHR, API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
+        make_api_version, ApplicationInfo, ColorSpaceKHR, CompositeAlphaFlagsKHR,
+        DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
+        DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, DeviceCreateInfo,
+        DeviceQueueCreateInfo, Extent2D, Format, ImageUsageFlags, InstanceCreateInfo,
+        PhysicalDevice, PhysicalDeviceFeatures, PresentModeKHR, Queue, QueueFlags, SharingMode,
+        SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR,
+        API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
     },
     Device, Entry, Instance,
 };
@@ -65,6 +67,8 @@ struct App {
     surface_manager: SurfaceManager,
     /// The linkage to the DLL for vulkan
     _entry: Entry,
+    /// See swapchain manager struct docs
+    swapchain_manager: SwapChainManager,
 }
 
 impl App {
@@ -73,17 +77,32 @@ impl App {
             ash_window::enumerate_required_extensions(event_loop.display_handle()?.as_raw())?;
 
         let window = Self::init_window(&event_loop)?;
-        let (entry, instance, debug_utils, device, queues, surface_manager) =
-            Self::init_vulkan(required_extensions, &window)?;
+
+        // init vulkan
+        let entry = Entry::linked();
+        let instance = Self::create_instance(&entry, required_extensions)?;
+        let debug_utils = Self::setup_debug_messenger(&entry, &instance)?;
+        let surface_manager = Self::create_surface_manager(&entry, &instance, &window)?;
+        let physical_device = Self::pick_physical_device(&instance, &surface_manager)?;
+        let (logical_device, queue_handles) =
+            Self::create_logical_device(&instance, &physical_device, &surface_manager)?;
+        let swapchain_manager = Self::create_swap_chain(
+            &instance,
+            &physical_device,
+            &surface_manager,
+            &window,
+            &logical_device,
+        )?;
 
         Ok(Self {
             _entry: entry,
             debug_utils,
-            device,
-            _queues: queues,
+            device: logical_device,
+            _queues: queue_handles,
             instance,
             _window: window,
             surface_manager,
+            swapchain_manager,
         })
     }
 
@@ -94,9 +113,6 @@ impl App {
                 window_id: _,
             } => {
                 elwp.exit();
-            }
-            Event::LoopExiting => {
-                self.surface_manager.destroy_surface();
             }
             _ => {}
         })?;
@@ -114,35 +130,62 @@ impl App {
         Ok(window)
     }
 
-    /// Initalizes Vulkan
-    fn init_vulkan(
-        required_extensions: &[*const c_char],
+    /// Creates the swap chain used to present render images to the screen
+    fn create_swap_chain(
+        instance: &Instance,
+        physical_device: &PhysicalDevice,
+        surface_manager: &SurfaceManager,
         window: &Window,
-    ) -> Result<(
-        Entry,
-        Instance,
-        Option<DebugUtilsExt>,
-        Device,
-        QueueHandles,
-        SurfaceManager,
-    )> {
-        let entry = Entry::linked();
+        logical_device: &Device,
+    ) -> Result<SwapChainManager> {
+        let queue_indicies = Self::find_queue_families(instance, physical_device, surface_manager);
+        let queue_family_indicies = Vec::from_iter(HashSet::from([
+            queue_indicies.graphics_family.unwrap() as u32,
+            queue_indicies.present_family.unwrap() as u32,
+        ]));
 
-        let instance = Self::create_instance(&entry, required_extensions)?;
-        let debug_utils = Self::setup_debug_messenger(&entry, &instance)?;
-        let surface_manager = Self::create_surface_manager(&entry, &instance, &window)?;
-        let physical_device = Self::pick_physical_device(&instance, &surface_manager)?;
-        let (logical_device, queue_handles) =
-            Self::create_logical_device(&instance, &physical_device, &surface_manager)?;
+        let swap_chain_support = Self::query_swap_chain_support(physical_device, surface_manager)?;
+        let surface_format = swap_chain_support.choose_swap_surface_format();
+        let present_mode = swap_chain_support.choose_swap_present_mode();
+        let extent = swap_chain_support.choose_swap_extent(window);
+        let image_count = swap_chain_support.get_image_count();
 
-        Ok((
-            entry,
-            instance,
-            debug_utils,
-            logical_device,
-            queue_handles,
-            surface_manager,
-        ))
+        let mut swap_chain_creation_info = SwapchainCreateInfoKHR::default()
+            .surface(surface_manager.surface.unwrap())
+            .min_image_count(image_count)
+            .image_format(surface_format.format)
+            .image_color_space(surface_format.color_space)
+            .image_extent(extent)
+            .present_mode(present_mode)
+            // always 1 unless doing sterioscopic 3D
+            .image_array_layers(1)
+            // use images as color attachments for drawing color pictures to
+            .image_usage(ImageUsageFlags::COLOR_ATTACHMENT)
+            // no transform
+            .pre_transform(swap_chain_support.capabilities.current_transform)
+            // ignore alpha channel
+            .composite_alpha(CompositeAlphaFlagsKHR::OPAQUE)
+            // enable clipping, to discard pixels that aren't visible
+            .clipped(true)
+            .old_swapchain(SwapchainKHR::null());
+        if queue_family_indicies.len() == 1 {
+            swap_chain_creation_info =
+                swap_chain_creation_info.image_sharing_mode(SharingMode::EXCLUSIVE);
+        } else {
+            swap_chain_creation_info = swap_chain_creation_info
+                .image_sharing_mode(SharingMode::CONCURRENT)
+                .queue_family_indices(&queue_family_indicies);
+        }
+
+        let swapchain_device = swapchain::Device::new(instance, logical_device);
+        let swapchain =
+            unsafe { swapchain_device.create_swapchain(&swap_chain_creation_info, None) }?;
+
+        Ok(SwapChainManager {
+            device: swapchain_device,
+            support_details: swap_chain_support,
+            swapchain,
+        })
     }
 
     /// Queries for the details of what the swap chain supports given
@@ -455,6 +498,9 @@ impl Drop for App {
             };
         }
 
+        self.swapchain_manager.destroy_swapchain();
+        self.surface_manager.destroy_surface();
+
         unsafe {
             self.device.destroy_device(None);
             self.instance.destroy_instance(None);
@@ -539,6 +585,96 @@ impl SurfaceManager {
 /// for a given surface
 struct SwapChainSupportDetails {
     capabilities: SurfaceCapabilitiesKHR,
+    /// The formats (color depth settings) available to use.
     formats: Vec<SurfaceFormatKHR>,
     present_modes: Vec<PresentModeKHR>,
+}
+
+impl SwapChainSupportDetails {
+    /// Picks the preferential surface format to use from the available
+    pub fn choose_swap_surface_format(&self) -> &SurfaceFormatKHR {
+        let srgb_color_space_formats = self
+            .formats
+            .iter()
+            .filter(|format| format.color_space == ColorSpaceKHR::SRGB_NONLINEAR)
+            .collect::<Vec<_>>();
+        if let Some(b8g8r8a8_format) = srgb_color_space_formats
+            .iter()
+            .find(|format| format.format == Format::B8G8R8A8_SRGB)
+        {
+            return *b8g8r8a8_format;
+        } else if let Some(srbg_format) = srgb_color_space_formats.first() {
+            return *srbg_format;
+        } else {
+            return self.formats.first().unwrap();
+        }
+    }
+
+    /// Picks the preferential swap mode to use based on the available
+    pub fn choose_swap_present_mode(&self) -> PresentModeKHR {
+        // prefer mailbox, where if we can render faster than the screen can present
+        // and the queue fills up, we'll replace the last image with the most up to
+        // date version
+        if self.present_modes.contains(&PresentModeKHR::MAILBOX) {
+            return PresentModeKHR::MAILBOX;
+        }
+        // otherwise, use FIFO - basically vertical sync. This is the only setting
+        // guaranteed to be available on all systems
+        return PresentModeKHR::FIFO;
+    }
+
+    /// Returns the "extent" of the images to draw - the resolution to use *in pixels*.
+    pub fn choose_swap_extent(&self, window: &Window) -> Extent2D {
+        match self.capabilities.current_extent.width {
+            // in this scenario, we're in a high DPI setting where extent is in screen
+            // space, but we need it to be in pixels. set it to the same size as the
+            // window
+            u32::MAX => {
+                let window_size = window.inner_size();
+                Extent2D {
+                    width: window_size.width.clamp(
+                        self.capabilities.min_image_extent.width,
+                        self.capabilities.max_image_extent.width,
+                    ),
+                    height: window_size.height.clamp(
+                        self.capabilities.min_image_extent.height,
+                        self.capabilities.max_image_extent.height,
+                    ),
+                }
+            }
+            _ => self.capabilities.current_extent,
+        }
+    }
+
+    /// Returns how many images the swap chain should use based on its support
+    pub fn get_image_count(&self) -> u32 {
+        let max_image_count = self.capabilities.max_image_count;
+        let min_image_count = self.capabilities.min_image_count;
+
+        let image_count = match max_image_count {
+            // zero means there is no max, so just use 1 more than the minimum
+            0 => min_image_count + 1,
+            // in this case, use a few more than the minimum so we're not
+            // stuck waiting on internal details
+            _ => {
+                let delta = (max_image_count - min_image_count) / 2;
+                min_image_count + delta
+            }
+        };
+
+        image_count.clamp(min_image_count, max_image_count)
+    }
+}
+
+/// Struct for holding references to swapchain
+struct SwapChainManager {
+    device: swapchain::Device,
+    support_details: SwapChainSupportDetails,
+    swapchain: SwapchainKHR,
+}
+
+impl SwapChainManager {
+    pub fn destroy_swapchain(&mut self) {
+        unsafe { self.device.destroy_swapchain(self.swapchain, None) }
+    }
 }
