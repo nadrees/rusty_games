@@ -1,13 +1,13 @@
 use std::ffi::{CStr, CString};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, ensure, Result};
 use ash::{
-    extensions::ext::DebugUtils,
+    ext::debug_utils,
     vk::{
         make_api_version, ApplicationInfo, DebugUtilsMessageSeverityFlagsEXT,
-        DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCreateInfoEXT,
-        DebugUtilsMessengerCreateInfoEXTBuilder, DebugUtilsMessengerEXT, InstanceCreateInfo,
-        PhysicalDevice, QueueFlags, API_VERSION_1_3,
+        DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT,
+        DeviceCreateInfo, DeviceQueueCreateInfo, InstanceCreateInfo, PhysicalDevice,
+        PhysicalDeviceFeatures, QueueFlags, API_VERSION_1_3,
     },
     Entry, Instance,
 };
@@ -61,6 +61,7 @@ impl App {
         Ok(())
     }
 
+    /// Creates the window that will interact with the OS to draw the results on the screen
     fn init_window() -> Result<(Glfw, PWindow)> {
         let mut glfw = glfw::init(fail_on_errors!())?;
         glfw.window_hint(glfw::WindowHint::Visible(true));
@@ -77,17 +78,38 @@ impl App {
         Ok((glfw, window))
     }
 
+    /// Initalizes Vulkan
     fn init_vulkan(glfw: &Glfw) -> Result<(Instance, Option<DebugUtilsExt>)> {
         let entry = Entry::linked();
 
         let instance = Self::create_instance(&entry, &glfw)?;
         let debug_utils = Self::setup_debug_messenger(&entry, &instance)?;
         let physical_device = Self::pick_physical_device(&instance)?;
-        let queue_family_indicies = Self::find_queue_families(&instance, &physical_device);
+        Self::create_logical_device(&instance, &physical_device)?;
 
         Ok((instance, debug_utils))
     }
 
+    /// Creates the logical device to interface with the selected physical device. Each queue family
+    /// will create 1 queue instance for submitting commands to.
+    fn create_logical_device(instance: &Instance, physical_device: &PhysicalDevice) -> Result<()> {
+        let indicies = Self::find_queue_families(instance, physical_device);
+        ensure!(indicies.is_complete());
+
+        let queue_priorities = [1.0f32];
+        let device_queue_creation_info = [DeviceQueueCreateInfo::default()
+            .queue_family_index(indicies.graphics_family.unwrap() as u32)
+            .queue_priorities(&queue_priorities)];
+
+        let physical_device_features = PhysicalDeviceFeatures::default();
+
+        let device_create_info =
+            DeviceCreateInfo::default().queue_create_infos(&device_queue_creation_info);
+
+        Ok(())
+    }
+
+    /// Queries the Queue Families the physica device supports, and records the index of the relevant ones.
     fn find_queue_families(
         instance: &Instance,
         physical_device: &PhysicalDevice,
@@ -95,12 +117,14 @@ impl App {
         let queue_family_properties =
             unsafe { instance.get_physical_device_queue_family_properties(*physical_device) };
         QueueFamilyIndicies {
+            _physical_device: *physical_device,
             graphics_family: queue_family_properties
                 .iter()
                 .position(|qfp| qfp.queue_flags.contains(QueueFlags::GRAPHICS)),
         }
     }
 
+    /// Queries the system for the available physical devices, and picks the most appropriate one for use.
     fn pick_physical_device(instance: &Instance) -> Result<PhysicalDevice> {
         let physical_devices = unsafe { instance.enumerate_physical_devices()? };
         let physical_device = physical_devices
@@ -115,11 +139,14 @@ impl App {
         return Ok(physical_device);
     }
 
+    /// Returns if the specified physical device is suitable for use for this application.
     fn is_device_suitable(instance: &Instance, physical_device: &PhysicalDevice) -> bool {
         let indicies = Self::find_queue_families(instance, physical_device);
         indicies.is_complete()
     }
 
+    /// Creates an Instance to interact with the core of Vulkan. Registers the needed extensions and
+    /// layers, as well as basic information about the application.
     fn create_instance(entry: &Entry, glfw: &Glfw) -> Result<Instance> {
         let appname = CString::new(env!("CARGO_PKG_NAME"))?;
         let version_major = env!("CARGO_PKG_VERSION_MAJOR").parse::<u32>()?;
@@ -127,7 +154,7 @@ impl App {
         let version_patch = env!("CARGO_PKG_VERSION_PATCH").parse::<u32>()?;
         let app_version = make_api_version(0, version_major, version_minor, version_patch);
 
-        let app_info = ApplicationInfo::builder()
+        let app_info = ApplicationInfo::default()
             .application_name(&appname)
             .application_version(app_version)
             .api_version(API_VERSION)
@@ -154,7 +181,7 @@ impl App {
 
         let mut debug_messenger_create_info = Self::get_debug_messenger_create_info();
 
-        let instance_create_info = InstanceCreateInfo::builder()
+        let instance_create_info = InstanceCreateInfo::default()
             .application_info(&app_info)
             .enabled_extension_names(&enabled_extension_name_ptrs)
             .enabled_layer_names(&enabled_layer_name_pts)
@@ -165,6 +192,8 @@ impl App {
         Ok(instance)
     }
 
+    /// Returns the required layers needed for Vulkan. Notably, includes the validation
+    /// layer if validations are enabled.
     fn gen_required_layers() -> Vec<String> {
         let mut layer_names = vec![];
         if ENABLE_VALIDATIONS {
@@ -174,13 +203,17 @@ impl App {
         return layer_names;
     }
 
+    /// Returns the needed instance exensions for Vulkan to function correctly.
+    /// These always require the extensions necessary to interact with the native
+    /// windowing system, and may include optional validation extensions if validations
+    /// are enabled.
     fn get_required_instance_extensions(glfw: &Glfw) -> Result<Vec<String>> {
         let mut enabled_extension_names: Vec<String> = vec![];
         if let Some(glfw_extensions) = glfw.get_required_instance_extensions() {
             enabled_extension_names = glfw_extensions;
         }
         if ENABLE_VALIDATIONS {
-            enabled_extension_names.push(DebugUtils::name().to_str()?.to_owned());
+            enabled_extension_names.push(debug_utils::NAME.to_str()?.to_owned());
         }
         debug!(
             "Instance extensions to enable: {}",
@@ -189,8 +222,10 @@ impl App {
         Ok(enabled_extension_names)
     }
 
-    fn get_debug_messenger_create_info<'a>() -> DebugUtilsMessengerCreateInfoEXTBuilder<'a> {
-        DebugUtilsMessengerCreateInfoEXT::builder()
+    /// Configures the DebugUtils extension for which message types and severity levels to
+    /// log.
+    fn get_debug_messenger_create_info<'a>() -> DebugUtilsMessengerCreateInfoEXT<'a> {
+        DebugUtilsMessengerCreateInfoEXT::default()
             .message_severity(
                 DebugUtilsMessageSeverityFlagsEXT::VERBOSE
                     | DebugUtilsMessageSeverityFlagsEXT::INFO
@@ -205,10 +240,12 @@ impl App {
             .pfn_user_callback(Some(vulkan_debug_utils_callback))
     }
 
+    /// If validations are enabled, creates and registers the DebugUtils extension which prints
+    /// logs to the console.
     fn setup_debug_messenger(entry: &Entry, instance: &Instance) -> Result<Option<DebugUtilsExt>> {
         if ENABLE_VALIDATIONS {
             let debug_utils_messenger_create_info = Self::get_debug_messenger_create_info();
-            let debug_utils = DebugUtils::new(entry, instance);
+            let debug_utils = debug_utils::Instance::new(entry, instance);
             let extension = unsafe {
                 debug_utils
                     .create_debug_utils_messenger(&debug_utils_messenger_create_info, None)?
@@ -248,16 +285,26 @@ impl Drop for App {
     }
 }
 
+/// Struct for holding the needed references for the DebugUtils extension.
+/// Primarily used so that we can correctly clean it up at application
+/// exit.
 struct DebugUtilsExt {
-    debug_utils: DebugUtils,
+    debug_utils: debug_utils::Instance,
     extension: DebugUtilsMessengerEXT,
 }
 
+/// Holds the indexes of the relevant queue families for a given
+/// physical device. Created from find_queue_families call.
 struct QueueFamilyIndicies {
+    /// Which physical device these queue families belong to
+    _physical_device: PhysicalDevice,
+    /// The graphics queue family index, if one is available
     graphics_family: Option<usize>,
 }
 
 impl QueueFamilyIndicies {
+    /// True if all queue families are available for this physical
+    /// device.
     pub fn is_complete(&self) -> bool {
         self.graphics_family.is_some()
     }

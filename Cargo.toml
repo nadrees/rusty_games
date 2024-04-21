@@ -10,7 +10,7 @@ enable_validations = []
 
 [dependencies]
 anyhow = { version = "1.0.76", features = ["backtrace"] }
-ash = { version = "0.37.3", features = ["linked"] }
+ash = { version = "0.38.0", features = ["linked"] }
 glfw = { version = "0.54.0", features = ["vulkan"] }
 simple_logger = "4.3.0"
 tracing = { version = "0.1.40", features = ["log-always"] }
