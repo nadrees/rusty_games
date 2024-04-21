@@ -1,4 +1,4 @@
-use std::ffi::{CStr, CString};
+use std::ffi::{c_char, CStr, CString};
 
 use anyhow::{anyhow, ensure, Result};
 use ash::{
@@ -11,9 +11,15 @@ use ash::{
     },
     Device, Entry, Instance,
 };
-use glfw::{fail_on_errors, Glfw, PWindow};
 use rusty_games::{init_logging, vulkan_debug_utils_callback};
 use tracing::{debug, info, trace};
+use winit::{
+    dpi::PhysicalSize,
+    event::{Event, WindowEvent},
+    event_loop::EventLoop,
+    raw_window_handle::HasDisplayHandle,
+    window::{Window, WindowBuilder},
+};
 
 const API_VERSION: u32 = API_VERSION_1_3;
 const WINDOW_WIDTH: u32 = 800;
@@ -28,8 +34,9 @@ const ENABLE_VALIDATIONS: bool = false;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logging()?;
 
-    let mut app = App::new()?;
-    app.run()?;
+    let event_loop = EventLoop::new()?;
+    let mut app = App::new(&event_loop)?;
+    app.run(event_loop)?;
 
     Ok(())
 }
@@ -43,54 +50,57 @@ struct App {
     debug_utils: Option<DebugUtilsExt>,
     /// The instance for interacting with Vulkan core
     instance: Instance,
-    // window must be dropped before glfw is,
-    // do not move it before window in this list
-    window: PWindow,
-    glfw: Glfw,
+    window: Window,
 }
 
 impl App {
-    pub fn new() -> Result<Self> {
-        let (glfw, window) = Self::init_window()?;
-        let (instance, debug_utils, device, queues) = Self::init_vulkan(&glfw)?;
+    pub fn new(event_loop: &EventLoop<()>) -> Result<Self> {
+        let required_extensions =
+            ash_window::enumerate_required_extensions(event_loop.display_handle()?.as_raw())?;
+
+        let window = Self::init_window(&event_loop)?;
+        let (instance, debug_utils, device, queues) = Self::init_vulkan(required_extensions)?;
 
         Ok(Self {
             debug_utils,
             device,
             queues,
-            glfw,
             instance,
             window,
         })
     }
 
-    pub fn run(&mut self) -> Result<()> {
-        self.main_loop()?;
+    pub fn run(&mut self, event_loop: EventLoop<()>) -> Result<()> {
+        event_loop.run(move |event, elwp| match event {
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                window_id: _,
+            } => {
+                elwp.exit();
+            }
+            _ => {}
+        })?;
         Ok(())
     }
 
     /// Creates the window that will interact with the OS to draw the results on the screen
-    fn init_window() -> Result<(Glfw, PWindow)> {
-        let mut glfw = glfw::init(fail_on_errors!())?;
-        glfw.window_hint(glfw::WindowHint::Visible(true));
-        glfw.window_hint(glfw::WindowHint::ClientApi(glfw::ClientApiHint::NoApi));
-        glfw.window_hint(glfw::WindowHint::Resizable(false));
-        let (window, _) = glfw
-            .create_window(
-                WINDOW_WIDTH,
-                WINDOW_HEIGHT,
-                WINDOW_TITLE,
-                glfw::WindowMode::Windowed,
-            )
-            .ok_or(anyhow!("Failed to create window"))?;
-        Ok((glfw, window))
+    fn init_window(event_loop: &EventLoop<()>) -> Result<Window> {
+        let window = WindowBuilder::new()
+            .with_inner_size(PhysicalSize::<u32>::from((WINDOW_WIDTH, WINDOW_HEIGHT)))
+            .with_resizable(false)
+            .with_active(true)
+            .with_title(WINDOW_TITLE)
+            .build(&event_loop)?;
+        Ok(window)
     }
 
     /// Initalizes Vulkan
-    fn init_vulkan(glfw: &Glfw) -> Result<(Instance, Option<DebugUtilsExt>, Device, QueueHandles)> {
+    fn init_vulkan(
+        required_extensions: &[*const c_char],
+    ) -> Result<(Instance, Option<DebugUtilsExt>, Device, QueueHandles)> {
         let entry = Entry::linked();
 
-        let instance = Self::create_instance(&entry, &glfw)?;
+        let instance = Self::create_instance(&entry, required_extensions)?;
         let debug_utils = Self::setup_debug_messenger(&entry, &instance)?;
         let physical_device = Self::pick_physical_device(&instance)?;
         let (logical_device, queue_handles) =
@@ -169,7 +179,7 @@ impl App {
 
     /// Creates an Instance to interact with the core of Vulkan. Registers the needed extensions and
     /// layers, as well as basic information about the application.
-    fn create_instance(entry: &Entry, glfw: &Glfw) -> Result<Instance> {
+    fn create_instance(entry: &Entry, required_extensions: &[*const c_char]) -> Result<Instance> {
         let appname = CString::new(env!("CARGO_PKG_NAME"))?;
         let version_major = env!("CARGO_PKG_VERSION_MAJOR").parse::<u32>()?;
         let version_minor = env!("CARGO_PKG_VERSION_MINOR").parse::<u32>()?;
@@ -183,14 +193,7 @@ impl App {
             .engine_name(&appname)
             .engine_version(app_version);
 
-        let enabled_extension_names = Self::get_required_instance_extensions(&glfw)?
-            .into_iter()
-            .map(|name| CString::new(name))
-            .collect::<Result<Vec<_>, _>>()?;
-        let enabled_extension_name_ptrs = enabled_extension_names
-            .iter()
-            .map(|extension| extension.as_ptr())
-            .collect::<Vec<_>>();
+        let enabled_extension_names = Self::get_required_instance_extensions(required_extensions)?;
 
         let enabled_layer_names = Self::gen_required_layers()
             .into_iter()
@@ -205,7 +208,7 @@ impl App {
 
         let instance_create_info = InstanceCreateInfo::default()
             .application_info(&app_info)
-            .enabled_extension_names(&enabled_extension_name_ptrs)
+            .enabled_extension_names(&enabled_extension_names)
             .enabled_layer_names(&enabled_layer_name_pts)
             .push_next(&mut debug_messenger_create_info);
 
@@ -229,18 +232,13 @@ impl App {
     /// These always require the extensions necessary to interact with the native
     /// windowing system, and may include optional validation extensions if validations
     /// are enabled.
-    fn get_required_instance_extensions(glfw: &Glfw) -> Result<Vec<String>> {
-        let mut enabled_extension_names: Vec<String> = vec![];
-        if let Some(glfw_extensions) = glfw.get_required_instance_extensions() {
-            enabled_extension_names = glfw_extensions;
-        }
+    fn get_required_instance_extensions(
+        required_extensions: &[*const c_char],
+    ) -> Result<Vec<*const c_char>> {
+        let mut enabled_extension_names: Vec<*const c_char> = Vec::from(required_extensions);
         if ENABLE_VALIDATIONS {
-            enabled_extension_names.push(debug_utils::NAME.to_str()?.to_owned());
+            enabled_extension_names.push(debug_utils::NAME.as_ptr());
         }
-        debug!(
-            "Instance extensions to enable: {}",
-            enabled_extension_names.join(", ")
-        );
         Ok(enabled_extension_names)
     }
 
@@ -278,14 +276,6 @@ impl App {
             }));
         }
         Ok(None)
-    }
-
-    fn main_loop(&mut self) -> Result<()> {
-        while !self.window.should_close() {
-            self.glfw.poll_events();
-        }
-
-        Ok(())
     }
 }
 
