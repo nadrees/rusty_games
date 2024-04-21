@@ -1,4 +1,4 @@
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 
 use anyhow::{anyhow, Result};
 use ash::{
@@ -7,13 +7,13 @@ use ash::{
         make_api_version, ApplicationInfo, DebugUtilsMessageSeverityFlagsEXT,
         DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCreateInfoEXT,
         DebugUtilsMessengerCreateInfoEXTBuilder, DebugUtilsMessengerEXT, InstanceCreateInfo,
-        PhysicalDevice, API_VERSION_1_3,
+        PhysicalDevice, QueueFlags, API_VERSION_1_3,
     },
     Entry, Instance,
 };
 use glfw::{fail_on_errors, Glfw, PWindow};
 use rusty_games::{init_logging, vulkan_debug_utils_callback};
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 
 const API_VERSION: u32 = API_VERSION_1_3;
 const WINDOW_WIDTH: u32 = 800;
@@ -41,11 +41,6 @@ struct App {
     // do not move it before window in this list
     window: PWindow,
     glfw: Glfw,
-}
-
-struct DebugUtilsExt {
-    debug_utils: DebugUtils,
-    extension: DebugUtilsMessengerEXT,
 }
 
 impl App {
@@ -87,21 +82,42 @@ impl App {
 
         let instance = Self::create_instance(&entry, &glfw)?;
         let debug_utils = Self::setup_debug_messenger(&entry, &instance)?;
-        Self::pick_physical_device(&instance)?;
+        let physical_device = Self::pick_physical_device(&instance)?;
+        let queue_family_indicies = Self::find_queue_families(&instance, &physical_device);
 
         Ok((instance, debug_utils))
     }
 
-    fn pick_physical_device(instance: &Instance) -> Result<PhysicalDevice> {
-        let physical_devices = unsafe { instance.enumerate_physical_devices()? };
-        physical_devices
-            .into_iter()
-            .find(Self::is_device_suitable)
-            .ok_or_else(|| anyhow!("Could not find a suitable physical device!"))
+    fn find_queue_families(
+        instance: &Instance,
+        physical_device: &PhysicalDevice,
+    ) -> QueueFamilyIndicies {
+        let queue_family_properties =
+            unsafe { instance.get_physical_device_queue_family_properties(*physical_device) };
+        QueueFamilyIndicies {
+            graphics_family: queue_family_properties
+                .iter()
+                .position(|qfp| qfp.queue_flags.contains(QueueFlags::GRAPHICS)),
+        }
     }
 
-    fn is_device_suitable(_physical_device: &PhysicalDevice) -> bool {
-        return true;
+    fn pick_physical_device(instance: &Instance) -> Result<PhysicalDevice> {
+        let physical_devices = unsafe { instance.enumerate_physical_devices()? };
+        let physical_device = physical_devices
+            .into_iter()
+            .find(|physical_device| Self::is_device_suitable(&instance, physical_device))
+            .ok_or_else(|| anyhow!("Could not find a suitable physical device!"))?;
+        let physical_device_props =
+            unsafe { instance.get_physical_device_properties(physical_device) };
+        trace!("Picked device {:?}", unsafe {
+            CStr::from_ptr(physical_device_props.device_name.as_ptr())
+        });
+        return Ok(physical_device);
+    }
+
+    fn is_device_suitable(instance: &Instance, physical_device: &PhysicalDevice) -> bool {
+        let indicies = Self::find_queue_families(instance, physical_device);
+        indicies.is_complete()
     }
 
     fn create_instance(entry: &Entry, glfw: &Glfw) -> Result<Instance> {
@@ -229,5 +245,20 @@ impl Drop for App {
         unsafe {
             self.instance.destroy_instance(None);
         }
+    }
+}
+
+struct DebugUtilsExt {
+    debug_utils: DebugUtils,
+    extension: DebugUtilsMessengerEXT,
+}
+
+struct QueueFamilyIndicies {
+    graphics_family: Option<usize>,
+}
+
+impl QueueFamilyIndicies {
+    pub fn is_complete(&self) -> bool {
+        self.graphics_family.is_some()
     }
 }
