@@ -7,7 +7,7 @@ use ash::{
         make_api_version, ApplicationInfo, DebugUtilsMessageSeverityFlagsEXT,
         DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCreateInfoEXT,
         DebugUtilsMessengerCreateInfoEXTBuilder, DebugUtilsMessengerEXT, InstanceCreateInfo,
-        API_VERSION_1_3,
+        PhysicalDevice, API_VERSION_1_3,
     },
     Entry, Instance,
 };
@@ -87,8 +87,21 @@ impl App {
 
         let instance = Self::create_instance(&entry, &glfw)?;
         let debug_utils = Self::setup_debug_messenger(&entry, &instance)?;
+        Self::pick_physical_device(&instance)?;
 
         Ok((instance, debug_utils))
+    }
+
+    fn pick_physical_device(instance: &Instance) -> Result<PhysicalDevice> {
+        let physical_devices = unsafe { instance.enumerate_physical_devices()? };
+        physical_devices
+            .into_iter()
+            .find(Self::is_device_suitable)
+            .ok_or_else(|| anyhow!("Could not find a suitable physical device!"))
+    }
+
+    fn is_device_suitable(_physical_device: &PhysicalDevice) -> bool {
+        return true;
     }
 
     fn create_instance(entry: &Entry, glfw: &Glfw) -> Result<Instance> {
