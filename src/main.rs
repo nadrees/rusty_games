@@ -8,10 +8,11 @@ use ash::{
     ext::debug_utils,
     khr::{surface, swapchain},
     vk::{
-        make_api_version, ApplicationInfo, ColorSpaceKHR, CompositeAlphaFlagsKHR,
-        DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
+        self, make_api_version, ApplicationInfo, ColorSpaceKHR, ComponentMapping, ComponentSwizzle,
+        CompositeAlphaFlagsKHR, DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
         DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, DeviceCreateInfo,
-        DeviceQueueCreateInfo, Extent2D, Format, Image, ImageUsageFlags, InstanceCreateInfo,
+        DeviceQueueCreateInfo, Extent2D, Format, Image, ImageAspectFlags, ImageSubresourceRange,
+        ImageUsageFlags, ImageView, ImageViewCreateInfo, ImageViewType, InstanceCreateInfo,
         PhysicalDevice, PhysicalDeviceFeatures, PresentModeKHR, Queue, QueueFlags, SharingMode,
         SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR,
         API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
@@ -70,6 +71,7 @@ struct App {
     /// See swapchain manager struct docs
     swapchain_manager: SwapChainManager,
     _images: Vec<Image>,
+    image_views: Vec<ImageView>,
 }
 
 impl App {
@@ -95,6 +97,7 @@ impl App {
             &logical_device,
         )?;
         let images = swapchain_manager.get_swapchain_images()?;
+        let image_views = Self::create_image_views(&logical_device, &swapchain_manager, &images)?;
 
         Ok(Self {
             _entry: entry,
@@ -106,6 +109,7 @@ impl App {
             surface_manager,
             swapchain_manager,
             _images: images,
+            image_views,
         })
     }
 
@@ -131,6 +135,48 @@ impl App {
             .with_title(WINDOW_TITLE)
             .build(&event_loop)?;
         Ok(window)
+    }
+
+    /// Creates Image views from the provided images
+    fn create_image_views(
+        logical_device: &Device,
+        swapchain_manager: &SwapChainManager,
+        images: &Vec<Image>,
+    ) -> Result<Vec<ImageView>> {
+        let format = swapchain_manager
+            .support_details
+            .choose_swap_surface_format();
+        let image_views = images
+            .iter()
+            .map(|image| {
+                let image_view_create_info = ImageViewCreateInfo::default()
+                    .image(*image)
+                    // 2D images
+                    .view_type(ImageViewType::TYPE_2D)
+                    .format(format.format)
+                    // no swizzling
+                    .components(
+                        ComponentMapping::default()
+                            .a(ComponentSwizzle::IDENTITY)
+                            .b(ComponentSwizzle::IDENTITY)
+                            .g(ComponentSwizzle::IDENTITY)
+                            .r(ComponentSwizzle::IDENTITY),
+                    )
+                    // color images with no mipmapping or layers
+                    .subresource_range(
+                        ImageSubresourceRange::default()
+                            .aspect_mask(ImageAspectFlags::COLOR)
+                            .base_mip_level(0)
+                            .level_count(1)
+                            .base_array_layer(0)
+                            .layer_count(1),
+                    );
+                let image_view =
+                    unsafe { logical_device.create_image_view(&image_view_create_info, None)? };
+                Ok::<_, vk::Result>(image_view)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(image_views)
     }
 
     /// Creates the swap chain used to present render images to the screen
@@ -499,6 +545,10 @@ impl Drop for App {
                     .debug_utils
                     .destroy_debug_utils_messenger(debug_utils.extension, None)
             };
+        }
+
+        for image_view in &self.image_views {
+            unsafe { self.device.destroy_image_view(*image_view, None) }
         }
 
         self.swapchain_manager.destroy_swapchain();
