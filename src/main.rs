@@ -11,7 +11,7 @@ use ash::{
         make_api_version, ApplicationInfo, ColorSpaceKHR, CompositeAlphaFlagsKHR,
         DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
         DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, DeviceCreateInfo,
-        DeviceQueueCreateInfo, Extent2D, Format, ImageUsageFlags, InstanceCreateInfo,
+        DeviceQueueCreateInfo, Extent2D, Format, Image, ImageUsageFlags, InstanceCreateInfo,
         PhysicalDevice, PhysicalDeviceFeatures, PresentModeKHR, Queue, QueueFlags, SharingMode,
         SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR,
         API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
@@ -69,6 +69,7 @@ struct App {
     _entry: Entry,
     /// See swapchain manager struct docs
     swapchain_manager: SwapChainManager,
+    _images: Vec<Image>,
 }
 
 impl App {
@@ -93,6 +94,7 @@ impl App {
             &window,
             &logical_device,
         )?;
+        let images = swapchain_manager.get_swapchain_images()?;
 
         Ok(Self {
             _entry: entry,
@@ -103,6 +105,7 @@ impl App {
             _window: window,
             surface_manager,
             swapchain_manager,
+            _images: images,
         })
     }
 
@@ -674,6 +677,11 @@ struct SwapChainManager {
 }
 
 impl SwapChainManager {
+    pub fn get_swapchain_images(&self) -> Result<Vec<Image>> {
+        let images = unsafe { self.device.get_swapchain_images(self.swapchain)? };
+        Ok(images)
+    }
+
     pub fn destroy_swapchain(&mut self) {
         unsafe { self.device.destroy_swapchain(self.swapchain, None) }
     }
