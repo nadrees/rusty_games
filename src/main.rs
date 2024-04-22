@@ -9,23 +9,24 @@ use ash::{
     khr::{surface, swapchain},
     vk::{
         self, make_api_version, ApplicationInfo, AttachmentDescription, AttachmentLoadOp,
-        AttachmentReference, AttachmentStoreOp, ColorSpaceKHR, ComponentMapping, ComponentSwizzle,
-        CompositeAlphaFlagsKHR, CullModeFlags, DebugUtilsMessageSeverityFlagsEXT,
-        DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT,
-        DeviceCreateInfo, DeviceQueueCreateInfo, Extent2D, Format, Framebuffer,
-        FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Image, ImageAspectFlags,
-        ImageLayout, ImageSubresourceRange, ImageUsageFlags, ImageView, ImageViewCreateInfo,
-        ImageViewType, InstanceCreateInfo, PhysicalDevice, PhysicalDeviceFeatures, Pipeline,
-        PipelineBindPoint, PipelineCache, PipelineColorBlendAttachmentState,
-        PipelineColorBlendStateCreateInfo, PipelineInputAssemblyStateCreateInfo, PipelineLayout,
-        PipelineLayoutCreateInfo, PipelineMultisampleStateCreateInfo,
-        PipelineRasterizationStateCreateInfo, PipelineShaderStageCreateInfo,
-        PipelineVertexInputStateCreateInfo, PipelineViewportStateCreateInfo, PolygonMode,
-        PresentModeKHR, PrimitiveTopology, Queue, QueueFlags, Rect2D, RenderPass,
-        RenderPassCreateInfo, SampleCountFlags, ShaderModule, ShaderModuleCreateInfo,
-        ShaderStageFlags, SharingMode, SubpassDescription, SurfaceCapabilitiesKHR,
-        SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR, Viewport,
-        API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
+        AttachmentReference, AttachmentStoreOp, ColorSpaceKHR, CommandBuffer,
+        CommandBufferAllocateInfo, CommandBufferLevel, CommandPool, CommandPoolCreateFlags,
+        CommandPoolCreateInfo, ComponentMapping, ComponentSwizzle, CompositeAlphaFlagsKHR,
+        CullModeFlags, DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
+        DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, DeviceCreateInfo,
+        DeviceQueueCreateInfo, Extent2D, Format, Framebuffer, FramebufferCreateInfo, FrontFace,
+        GraphicsPipelineCreateInfo, Image, ImageAspectFlags, ImageLayout, ImageSubresourceRange,
+        ImageUsageFlags, ImageView, ImageViewCreateInfo, ImageViewType, InstanceCreateInfo,
+        PhysicalDevice, PhysicalDeviceFeatures, Pipeline, PipelineBindPoint, PipelineCache,
+        PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
+        PipelineInputAssemblyStateCreateInfo, PipelineLayout, PipelineLayoutCreateInfo,
+        PipelineMultisampleStateCreateInfo, PipelineRasterizationStateCreateInfo,
+        PipelineShaderStageCreateInfo, PipelineVertexInputStateCreateInfo,
+        PipelineViewportStateCreateInfo, PolygonMode, PresentModeKHR, PrimitiveTopology, Queue,
+        QueueFlags, Rect2D, RenderPass, RenderPassCreateInfo, SampleCountFlags, ShaderModule,
+        ShaderModuleCreateInfo, ShaderStageFlags, SharingMode, SubpassDescription,
+        SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR,
+        Viewport, API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
     },
     Device, Entry, Instance,
 };
@@ -92,6 +93,11 @@ struct App {
     pipeline: Pipeline,
     /// The frame buffers for use in rendering images
     frame_buffers: Vec<Framebuffer>,
+    /// Command pool responsible for managing memory and creating
+    /// command buffers
+    command_pool: CommandPool,
+    /// The command buffer to submit draw commands to
+    command_buffer: CommandBuffer,
 }
 
 impl App {
@@ -144,6 +150,15 @@ impl App {
             &window,
         )?;
 
+        // configure command buffers
+        let command_pool = Self::create_command_pool(
+            &logical_device,
+            &instance,
+            &physical_device,
+            &surface_manager,
+        )?;
+        let command_buffer = Self::create_command_buffer(&logical_device, &command_pool)?;
+
         Ok(Self {
             _entry: entry,
             debug_utils,
@@ -159,6 +174,8 @@ impl App {
             pipeline_layout,
             pipeline,
             frame_buffers,
+            command_pool,
+            command_buffer,
         })
     }
 
@@ -184,6 +201,38 @@ impl App {
             .with_title(WINDOW_TITLE)
             .build(&event_loop)?;
         Ok(window)
+    }
+
+    /// Allocates the command buffer from the command pool
+    fn create_command_buffer(
+        logical_device: &Device,
+        command_pool: &CommandPool,
+    ) -> Result<CommandBuffer> {
+        let allocate_info = CommandBufferAllocateInfo::default()
+            .command_pool(*command_pool)
+            .level(CommandBufferLevel::PRIMARY)
+            .command_buffer_count(1);
+
+        let command_buffers = unsafe { logical_device.allocate_command_buffers(&allocate_info)? };
+        Ok(command_buffers[0])
+    }
+
+    /// Creates a command pool for getting the command buffers from
+    fn create_command_pool(
+        logical_device: &Device,
+        instance: &Instance,
+        physical_device: &PhysicalDevice,
+        surface_manager: &SurfaceManager,
+    ) -> Result<CommandPool> {
+        let queue_family_indicies =
+            Self::find_queue_families(instance, physical_device, surface_manager);
+
+        let create_command_pool = CommandPoolCreateInfo::default()
+            .flags(CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+            .queue_family_index(queue_family_indicies.graphics_family.unwrap() as u32);
+        let command_pool =
+            unsafe { logical_device.create_command_pool(&create_command_pool, None)? };
+        Ok(command_pool)
     }
 
     /// Creates the frame buffers
@@ -623,7 +672,6 @@ impl App {
     ) -> QueueFamilyIndicies {
         let queue_family_properties =
             unsafe { instance.get_physical_device_queue_family_properties(*physical_device) };
-        // let physical_device_present_support = surface.get_physical_device_surface_support(*physical_device, queue_family_index, surface)
         QueueFamilyIndicies {
             _physical_device: *physical_device,
             graphics_family: queue_family_properties
@@ -819,6 +867,8 @@ impl Drop for App {
                     .destroy_debug_utils_messenger(debug_utils.extension, None)
             };
         }
+
+        unsafe { self.device.destroy_command_pool(self.command_pool, None) }
 
         for frame_buffer in &self.frame_buffers {
             unsafe { self.device.destroy_framebuffer(*frame_buffer, None) }
