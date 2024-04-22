@@ -209,6 +209,10 @@ impl App {
             } => {
                 self.draw_frame().unwrap();
             }
+            Event::LoopExiting => {
+                // wait for vulkan to finish up before exiting
+                unsafe { self.device.device_wait_idle() }.unwrap();
+            }
             _ => {}
         })?;
         Ok(())
