@@ -10,16 +10,16 @@ use ash::{
     vk::{
         self, make_api_version, AccessFlags, ApplicationInfo, AttachmentDescription,
         AttachmentLoadOp, AttachmentReference, AttachmentStoreOp, ClearColorValue, ClearValue,
-        ColorSpaceKHR, CommandBuffer, CommandBufferAllocateInfo, CommandBufferBeginInfo,
-        CommandBufferLevel, CommandBufferResetFlags, CommandPool, CommandPoolCreateFlags,
-        CommandPoolCreateInfo, ComponentMapping, ComponentSwizzle, CompositeAlphaFlagsKHR,
-        CullModeFlags, DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
-        DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, DeviceCreateInfo,
-        DeviceQueueCreateInfo, Extent2D, Fence, FenceCreateFlags, FenceCreateInfo, Format,
-        Framebuffer, FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Image,
-        ImageAspectFlags, ImageLayout, ImageSubresourceRange, ImageUsageFlags, ImageView,
-        ImageViewCreateInfo, ImageViewType, InstanceCreateInfo, PhysicalDevice,
-        PhysicalDeviceFeatures, Pipeline, PipelineBindPoint, PipelineCache,
+        ColorComponentFlags, ColorSpaceKHR, CommandBuffer, CommandBufferAllocateInfo,
+        CommandBufferBeginInfo, CommandBufferLevel, CommandBufferResetFlags, CommandPool,
+        CommandPoolCreateFlags, CommandPoolCreateInfo, ComponentMapping, ComponentSwizzle,
+        CompositeAlphaFlagsKHR, CullModeFlags, DebugUtilsMessageSeverityFlagsEXT,
+        DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT,
+        DeviceCreateInfo, DeviceQueueCreateInfo, Extent2D, Fence, FenceCreateFlags,
+        FenceCreateInfo, Format, Framebuffer, FramebufferCreateInfo, FrontFace,
+        GraphicsPipelineCreateInfo, Image, ImageAspectFlags, ImageLayout, ImageSubresourceRange,
+        ImageUsageFlags, ImageView, ImageViewCreateInfo, ImageViewType, InstanceCreateInfo,
+        PhysicalDevice, PhysicalDeviceFeatures, Pipeline, PipelineBindPoint, PipelineCache,
         PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
         PipelineInputAssemblyStateCreateInfo, PipelineLayout, PipelineLayoutCreateInfo,
         PipelineMultisampleStateCreateInfo, PipelineRasterizationStateCreateInfo,
@@ -557,8 +557,9 @@ impl App {
 
         // settings for color blending per framebuffer. disable this for now, resulting in color output
         // from vertex shader passing thru
-        let color_blend_attachment_state =
-            [PipelineColorBlendAttachmentState::default().blend_enable(false)];
+        let color_blend_attachment_state = [PipelineColorBlendAttachmentState::default()
+            .blend_enable(false)
+            .color_write_mask(ColorComponentFlags::RGBA)];
 
         // settings for global color blending. disable this as well.
         let pipeline_color_blend_state = PipelineColorBlendStateCreateInfo::default()
