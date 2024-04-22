@@ -9,13 +9,20 @@ use ash::{
     khr::{surface, swapchain},
     vk::{
         self, make_api_version, ApplicationInfo, ColorSpaceKHR, ComponentMapping, ComponentSwizzle,
-        CompositeAlphaFlagsKHR, DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
-        DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, DeviceCreateInfo,
-        DeviceQueueCreateInfo, Extent2D, Format, Image, ImageAspectFlags, ImageSubresourceRange,
-        ImageUsageFlags, ImageView, ImageViewCreateInfo, ImageViewType, InstanceCreateInfo,
-        PhysicalDevice, PhysicalDeviceFeatures, PresentModeKHR, Queue, QueueFlags, ShaderModule,
-        ShaderModuleCreateInfo, SharingMode, SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR,
-        SwapchainCreateInfoKHR, SwapchainKHR, API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
+        CompositeAlphaFlagsKHR, CullModeFlags, DebugUtilsMessageSeverityFlagsEXT,
+        DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT,
+        DeviceCreateInfo, DeviceQueueCreateInfo, DynamicState, Extent2D, Format, FrontFace, Image,
+        ImageAspectFlags, ImageSubresourceRange, ImageUsageFlags, ImageView, ImageViewCreateInfo,
+        ImageViewType, InstanceCreateInfo, PhysicalDevice, PhysicalDeviceFeatures,
+        PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
+        PipelineDynamicStateCreateInfo, PipelineInputAssemblyStateCreateInfo, PipelineLayout,
+        PipelineLayoutCreateInfo, PipelineMultisampleStateCreateInfo,
+        PipelineRasterizationStateCreateInfo, PipelineShaderStageCreateInfo,
+        PipelineVertexInputStateCreateInfo, PipelineViewportStateCreateInfo, PolygonMode,
+        PresentModeKHR, PrimitiveTopology, Queue, QueueFlags, Rect2D, ShaderModule,
+        ShaderModuleCreateInfo, ShaderStageFlags, SharingMode, SurfaceCapabilitiesKHR,
+        SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR, Viewport,
+        API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
     },
     Device, Entry, Instance,
 };
@@ -70,8 +77,12 @@ struct App {
     _entry: Entry,
     /// See swapchain manager struct docs
     swapchain_manager: SwapChainManager,
+    /// Images from the swap chain
     _images: Vec<Image>,
+    /// Views to interact with the images
     image_views: Vec<ImageView>,
+    /// layout for dynamic variables within the graphics pipeline
+    pipeline_layout: PipelineLayout,
 }
 
 impl App {
@@ -98,7 +109,14 @@ impl App {
         )?;
         let images = swapchain_manager.get_swapchain_images()?;
         let image_views = Self::create_image_views(&logical_device, &swapchain_manager, &images)?;
-        Self::create_graphics_pipeline(&logical_device)?;
+
+        // configure graphics pipeline
+        let shader_modules = Self::create_shader_modules(&logical_device)?;
+        let pipeline_layout = Self::create_pipeline_layout(&logical_device)?;
+
+        for (shader_module, _) in shader_modules {
+            unsafe { logical_device.destroy_shader_module(shader_module, None) }
+        }
 
         Ok(Self {
             _entry: entry,
@@ -111,6 +129,7 @@ impl App {
             swapchain_manager,
             _images: images,
             image_views,
+            pipeline_layout,
         })
     }
 
@@ -138,14 +157,29 @@ impl App {
         Ok(window)
     }
 
-    /// Loads the shaders and creates a graphics pipeline to start submitting commands to
-    fn create_graphics_pipeline(logical_device: &Device) -> Result<()> {
+    /// Creates the pipeline layout for passing dynamic values to the pipeline
+    fn create_pipeline_layout(logical_device: &Device) -> Result<PipelineLayout> {
+        let pipeline_layout_create_info = PipelineLayoutCreateInfo::default();
+        let pipeline_layout =
+            unsafe { logical_device.create_pipeline_layout(&pipeline_layout_create_info, None)? };
+        Ok(pipeline_layout)
+    }
+
+    /// Creates the shader modules and their associated pipeline create infos for use
+    /// in creating the graphics pipeline
+    fn create_shader_modules<'a>(
+        logical_device: &Device,
+    ) -> Result<[(ShaderModule, PipelineShaderStageCreateInfo<'a>); 2]> {
         let vertex_shader_code = include_bytes!("../target/shaders/vert.spv");
         ensure!(
             vertex_shader_code.len() % 4 == 0,
             "Invalid vertex shader code read!"
         );
         let vertex_shader_module = Self::create_shader_module(logical_device, vertex_shader_code)?;
+        let pipeline_vertex_shader_stage_create_info = PipelineShaderStageCreateInfo::default()
+            .stage(ShaderStageFlags::VERTEX)
+            .module(vertex_shader_module)
+            .name(&CStr::from_bytes_with_nul(b"main\0")?);
 
         let fragment_shader_code = include_bytes!("../target/shaders/frag.spv");
         ensure!(
@@ -154,11 +188,86 @@ impl App {
         );
         let fragment_shader_module =
             Self::create_shader_module(logical_device, fragment_shader_code)?;
+        let pipeline_fragment_shader_stage_create_info = PipelineShaderStageCreateInfo::default()
+            .stage(ShaderStageFlags::FRAGMENT)
+            .module(fragment_shader_module)
+            .name(&CStr::from_bytes_with_nul(b"main\0")?);
 
-        unsafe {
-            logical_device.destroy_shader_module(vertex_shader_module, None);
-            logical_device.destroy_shader_module(fragment_shader_module, None);
-        }
+        Ok([
+            (
+                vertex_shader_module,
+                pipeline_vertex_shader_stage_create_info,
+            ),
+            (
+                fragment_shader_module,
+                pipeline_fragment_shader_stage_create_info,
+            ),
+        ])
+    }
+
+    /// Configures the fixed function stages and creates a graphics pipeline to start submitting commands to
+    fn create_graphics_pipeline(
+        swapchain_manager: &SwapChainManager,
+        window: &Window,
+    ) -> Result<()> {
+        // we're not using vertex buffers, so just an empty object
+        let pipeline_vertex_input_state_create_info = PipelineVertexInputStateCreateInfo::default();
+
+        // configure the vertexes to be interpreted as a list of triangles
+        let pipeline_input_assembly_state_create_info =
+            PipelineInputAssemblyStateCreateInfo::default()
+                .topology(PrimitiveTopology::TRIANGLE_LIST)
+                .primitive_restart_enable(false);
+
+        // default viewport covering entire swapchain extent, no depth filtering
+        let swapchain_extent = swapchain_manager.support_details.choose_swap_extent(window);
+        let viewport = Viewport::default()
+            .x(0.0f32)
+            .y(0.0f32)
+            .width(swapchain_extent.width as f32)
+            .height(swapchain_extent.height as f32)
+            .min_depth(0.0f32)
+            .max_depth(1.0f32);
+
+        // default scissor, doing nothing
+        let scissor = Rect2D::default().extent(swapchain_extent);
+
+        let viewport_create_info = PipelineViewportStateCreateInfo::default()
+            .viewports(&[viewport])
+            .scissors(&[scissor]);
+
+        let rasteratization_create_info = PipelineRasterizationStateCreateInfo::default()
+            // setting this to false discards points before the near plane or after the far plane
+            // setting it to true would instead clamp them
+            .depth_clamp_enable(false)
+            // setting this to true would disable the rasterizer
+            .rasterizer_discard_enable(false)
+            // create filled polygons, instead of lines or points
+            .polygon_mode(PolygonMode::FILL)
+            // default line width
+            .line_width(1.0f32)
+            // culling will remove faces from the rasterization output
+            // setting it to back removes the back faces
+            .cull_mode(CullModeFlags::BACK)
+            // determines how to know which face is front or back
+            // in CLOCKWISE faces composed of verticies traveling in a clockwise direction are front facing
+            .front_face(FrontFace::CLOCKWISE)
+            // disable depth biasing, mainly used for shadow mapping
+            .depth_bias_enable(false);
+
+        // disable multisampling
+        let multisampling_state_create_info =
+            PipelineMultisampleStateCreateInfo::default().sample_shading_enable(false);
+
+        // settings for color blending per framebuffer. disable this for now, resulting in color output
+        // from vertex shader passing thru
+        let color_blend_attachment_state =
+            PipelineColorBlendAttachmentState::default().blend_enable(false);
+
+        // settings for global color blending. disable this as well.
+        let pipeline_color_blend_state = PipelineColorBlendStateCreateInfo::default()
+            .logic_op_enable(false)
+            .attachments(&[color_blend_attachment_state]);
 
         Ok(())
     }
@@ -586,6 +695,11 @@ impl Drop for App {
                     .debug_utils
                     .destroy_debug_utils_messenger(debug_utils.extension, None)
             };
+        }
+
+        unsafe {
+            self.device
+                .destroy_pipeline_layout(self.pipeline_layout, None)
         }
 
         for image_view in &self.image_views {
