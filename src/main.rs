@@ -11,21 +11,23 @@ use ash::{
         self, make_api_version, ApplicationInfo, AttachmentDescription, AttachmentLoadOp,
         AttachmentReference, AttachmentStoreOp, ClearColorValue, ClearValue, ColorSpaceKHR,
         CommandBuffer, CommandBufferAllocateInfo, CommandBufferBeginInfo, CommandBufferLevel,
-        CommandPool, CommandPoolCreateFlags, CommandPoolCreateInfo, ComponentMapping,
-        ComponentSwizzle, CompositeAlphaFlagsKHR, CullModeFlags, DebugUtilsMessageSeverityFlagsEXT,
-        DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT,
-        DeviceCreateInfo, DeviceQueueCreateInfo, Extent2D, Format, Framebuffer,
-        FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Image, ImageAspectFlags,
-        ImageLayout, ImageSubresourceRange, ImageUsageFlags, ImageView, ImageViewCreateInfo,
-        ImageViewType, InstanceCreateInfo, PhysicalDevice, PhysicalDeviceFeatures, Pipeline,
-        PipelineBindPoint, PipelineCache, PipelineColorBlendAttachmentState,
-        PipelineColorBlendStateCreateInfo, PipelineInputAssemblyStateCreateInfo, PipelineLayout,
-        PipelineLayoutCreateInfo, PipelineMultisampleStateCreateInfo,
-        PipelineRasterizationStateCreateInfo, PipelineShaderStageCreateInfo,
-        PipelineVertexInputStateCreateInfo, PipelineViewportStateCreateInfo, PolygonMode,
-        PresentModeKHR, PrimitiveTopology, Queue, QueueFlags, Rect2D, RenderPass,
-        RenderPassBeginInfo, RenderPassCreateInfo, SampleCountFlags, ShaderModule,
-        ShaderModuleCreateInfo, ShaderStageFlags, SharingMode, SubpassContents, SubpassDescription,
+        CommandBufferResetFlags, CommandPool, CommandPoolCreateFlags, CommandPoolCreateInfo,
+        ComponentMapping, ComponentSwizzle, CompositeAlphaFlagsKHR, CullModeFlags,
+        DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
+        DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, DeviceCreateInfo,
+        DeviceQueueCreateInfo, Extent2D, Fence, FenceCreateFlags, FenceCreateInfo, Format,
+        Framebuffer, FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Image,
+        ImageAspectFlags, ImageLayout, ImageSubresourceRange, ImageUsageFlags, ImageView,
+        ImageViewCreateInfo, ImageViewType, InstanceCreateInfo, PhysicalDevice,
+        PhysicalDeviceFeatures, Pipeline, PipelineBindPoint, PipelineCache,
+        PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
+        PipelineInputAssemblyStateCreateInfo, PipelineLayout, PipelineLayoutCreateInfo,
+        PipelineMultisampleStateCreateInfo, PipelineRasterizationStateCreateInfo,
+        PipelineShaderStageCreateInfo, PipelineStageFlags, PipelineVertexInputStateCreateInfo,
+        PipelineViewportStateCreateInfo, PolygonMode, PresentModeKHR, PrimitiveTopology, Queue,
+        QueueFlags, Rect2D, RenderPass, RenderPassBeginInfo, RenderPassCreateInfo,
+        SampleCountFlags, Semaphore, SemaphoreCreateInfo, ShaderModule, ShaderModuleCreateInfo,
+        ShaderStageFlags, SharingMode, SubmitInfo, SubpassContents, SubpassDescription,
         SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR,
         Viewport, API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
     },
@@ -64,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 struct App {
     /// Handles to the queues for submitting instructions to
-    _queues: QueueHandles,
+    queues: QueueHandles,
     /// The logical device for interfacing with the
     /// physical hardware
     device: Device,
@@ -99,6 +101,13 @@ struct App {
     command_pool: CommandPool,
     /// The command buffer to submit draw commands to
     command_buffer: CommandBuffer,
+    /// Semaphore for when the image is available to be used from the
+    /// swapchain
+    image_available_semaphore: Semaphore,
+    /// Semaphore for when the rendering has finished
+    render_finished_semaphore: Semaphore,
+    /// Fence for synchronizing render passes
+    in_flight_fence: Fence,
 }
 
 impl App {
@@ -159,12 +168,14 @@ impl App {
             &surface_manager,
         )?;
         let command_buffer = Self::create_command_buffer(&logical_device, &command_pool)?;
+        let (image_available_semaphore, render_finished_semaphore, in_flight_fence) =
+            Self::create_sync_object(&&logical_device)?;
 
         Ok(Self {
             _entry: entry,
             debug_utils,
             device: logical_device,
-            _queues: queue_handles,
+            queues: queue_handles,
             instance,
             window,
             surface_manager,
@@ -177,6 +188,9 @@ impl App {
             frame_buffers,
             command_pool,
             command_buffer,
+            image_available_semaphore,
+            render_finished_semaphore,
+            in_flight_fence,
         })
     }
 
@@ -188,8 +202,51 @@ impl App {
             } => {
                 elwp.exit();
             }
+            Event::WindowEvent {
+                window_id: _,
+                event: WindowEvent::RedrawRequested,
+            } => {
+                self.draw_frame().unwrap();
+            }
             _ => {}
         })?;
+        Ok(())
+    }
+
+    fn draw_frame(&self) -> Result<()> {
+        let fences = [self.in_flight_fence];
+        unsafe {
+            // wait for previous draw to complete
+            self.device.wait_for_fences(&fences, true, u64::MAX)?;
+            // reset the fence so that it can be re-signaled when this draw is complete
+            self.device.reset_fences(&fences)?;
+        }
+
+        let image_index = self
+            .swapchain_manager
+            .acquire_next_image_index(&self.image_available_semaphore)?;
+
+        unsafe {
+            self.device
+                .reset_command_buffer(self.command_buffer, CommandBufferResetFlags::empty())?
+        }
+
+        self.record_command_buffer(image_index as usize)?;
+
+        let wait_semaphores = [self.image_available_semaphore];
+        let signal_semaphores = [self.render_finished_semaphore];
+        let pipeline_stage_flags = [PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+        let command_buffers = [self.command_buffer];
+        let submit_info = [SubmitInfo::default()
+            .wait_semaphores(&wait_semaphores)
+            .wait_dst_stage_mask(&pipeline_stage_flags)
+            .command_buffers(&command_buffers)
+            .signal_semaphores(&signal_semaphores)];
+        unsafe {
+            self.device
+                .queue_submit(self.queues.graphics, &submit_info, self.in_flight_fence)?
+        }
+
         Ok(())
     }
 
@@ -246,6 +303,23 @@ impl App {
             .with_title(WINDOW_TITLE)
             .build(&event_loop)?;
         Ok(window)
+    }
+
+    fn create_sync_object(logical_device: &Device) -> Result<(Semaphore, Semaphore, Fence)> {
+        let semaphore_create_info = SemaphoreCreateInfo::default();
+        let fence_create_info = FenceCreateInfo::default().flags(FenceCreateFlags::SIGNALED);
+
+        let image_availabe_semaphore =
+            unsafe { logical_device.create_semaphore(&semaphore_create_info, None)? };
+        let render_finished_semaphore =
+            unsafe { logical_device.create_semaphore(&semaphore_create_info, None)? };
+        let in_flight_fence = unsafe { logical_device.create_fence(&fence_create_info, None)? };
+
+        Ok((
+            image_availabe_semaphore,
+            render_finished_semaphore,
+            in_flight_fence,
+        ))
     }
 
     /// Allocates the command buffer from the command pool
@@ -702,7 +776,7 @@ impl App {
         let present_queue_handle =
             unsafe { logical_device.get_device_queue(indicies.present_family.unwrap() as u32, 0) };
         let queue_handles = QueueHandles {
-            _graphics: graphics_queue_handle,
+            graphics: graphics_queue_handle,
             _present: present_queue_handle,
         };
 
@@ -913,7 +987,14 @@ impl Drop for App {
             };
         }
 
-        unsafe { self.device.destroy_command_pool(self.command_pool, None) }
+        unsafe {
+            self.device
+                .destroy_semaphore(self.image_available_semaphore, None);
+            self.device
+                .destroy_semaphore(self.render_finished_semaphore, None);
+            self.device.destroy_fence(self.in_flight_fence, None);
+            self.device.destroy_command_pool(self.command_pool, None);
+        }
 
         for frame_buffer in &self.frame_buffers {
             unsafe { self.device.destroy_framebuffer(*frame_buffer, None) }
@@ -969,7 +1050,7 @@ impl QueueFamilyIndicies {
 /// Holds handles to the queues created as part of the logical
 /// device initialization.
 struct QueueHandles {
-    _graphics: Queue,
+    graphics: Queue,
     _present: Queue,
 }
 
@@ -1113,5 +1194,19 @@ impl SwapChainManager {
 
     pub fn destroy_swapchain(&mut self) {
         unsafe { self.device.destroy_swapchain(self.swapchain, None) }
+    }
+
+    /// Aquires the index of the next image to use from the swapchain, and registers the
+    /// signal semaphore to be signaled when its ready for use.
+    pub fn acquire_next_image_index(&self, signal_semaphore: &Semaphore) -> Result<u32> {
+        let (index, _) = unsafe {
+            self.device.acquire_next_image(
+                self.swapchain,
+                u64::MAX,
+                *signal_semaphore,
+                Fence::null(),
+            )?
+        };
+        Ok(index)
     }
 }
