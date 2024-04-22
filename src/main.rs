@@ -12,19 +12,20 @@ use ash::{
         AttachmentReference, AttachmentStoreOp, ColorSpaceKHR, ComponentMapping, ComponentSwizzle,
         CompositeAlphaFlagsKHR, CullModeFlags, DebugUtilsMessageSeverityFlagsEXT,
         DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT,
-        DeviceCreateInfo, DeviceQueueCreateInfo, Extent2D, Format, FrontFace,
-        GraphicsPipelineCreateInfo, Image, ImageAspectFlags, ImageLayout, ImageSubresourceRange,
-        ImageUsageFlags, ImageView, ImageViewCreateInfo, ImageViewType, InstanceCreateInfo,
-        PhysicalDevice, PhysicalDeviceFeatures, Pipeline, PipelineBindPoint, PipelineCache,
-        PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
-        PipelineInputAssemblyStateCreateInfo, PipelineLayout, PipelineLayoutCreateInfo,
-        PipelineMultisampleStateCreateInfo, PipelineRasterizationStateCreateInfo,
-        PipelineShaderStageCreateInfo, PipelineVertexInputStateCreateInfo,
-        PipelineViewportStateCreateInfo, PolygonMode, PresentModeKHR, PrimitiveTopology, Queue,
-        QueueFlags, Rect2D, RenderPass, RenderPassCreateInfo, SampleCountFlags, ShaderModule,
-        ShaderModuleCreateInfo, ShaderStageFlags, SharingMode, SubpassDescription,
-        SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR,
-        Viewport, API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
+        DeviceCreateInfo, DeviceQueueCreateInfo, Extent2D, Format, Framebuffer,
+        FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Image, ImageAspectFlags,
+        ImageLayout, ImageSubresourceRange, ImageUsageFlags, ImageView, ImageViewCreateInfo,
+        ImageViewType, InstanceCreateInfo, PhysicalDevice, PhysicalDeviceFeatures, Pipeline,
+        PipelineBindPoint, PipelineCache, PipelineColorBlendAttachmentState,
+        PipelineColorBlendStateCreateInfo, PipelineInputAssemblyStateCreateInfo, PipelineLayout,
+        PipelineLayoutCreateInfo, PipelineMultisampleStateCreateInfo,
+        PipelineRasterizationStateCreateInfo, PipelineShaderStageCreateInfo,
+        PipelineVertexInputStateCreateInfo, PipelineViewportStateCreateInfo, PolygonMode,
+        PresentModeKHR, PrimitiveTopology, Queue, QueueFlags, Rect2D, RenderPass,
+        RenderPassCreateInfo, SampleCountFlags, ShaderModule, ShaderModuleCreateInfo,
+        ShaderStageFlags, SharingMode, SubpassDescription, SurfaceCapabilitiesKHR,
+        SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR, Viewport,
+        API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
     },
     Device, Entry, Instance,
 };
@@ -89,6 +90,8 @@ struct App {
     pipeline_layout: PipelineLayout,
     /// The graphics pipeline itself
     pipeline: Pipeline,
+    /// The frame buffers for use in rendering images
+    frame_buffers: Vec<Framebuffer>,
 }
 
 impl App {
@@ -133,6 +136,14 @@ impl App {
             unsafe { logical_device.destroy_shader_module(shader_module, None) }
         }
 
+        let frame_buffers = Self::create_frame_buffers(
+            &logical_device,
+            &image_views,
+            &render_pass,
+            &swapchain_manager,
+            &window,
+        )?;
+
         Ok(Self {
             _entry: entry,
             debug_utils,
@@ -147,6 +158,7 @@ impl App {
             render_pass,
             pipeline_layout,
             pipeline,
+            frame_buffers,
         })
     }
 
@@ -172,6 +184,32 @@ impl App {
             .with_title(WINDOW_TITLE)
             .build(&event_loop)?;
         Ok(window)
+    }
+
+    /// Creates the frame buffers
+    fn create_frame_buffers(
+        logical_device: &Device,
+        image_views: &Vec<ImageView>,
+        render_pass: &RenderPass,
+        swapchain_manager: &SwapChainManager,
+        window: &Window,
+    ) -> Result<Vec<Framebuffer>> {
+        let swapchain_extent = swapchain_manager.support_details.choose_swap_extent(window);
+        let frame_buffers = image_views
+            .iter()
+            .map(|image_view| {
+                let attachments = [*image_view];
+                let create_info = FramebufferCreateInfo::default()
+                    .render_pass(*render_pass)
+                    .attachments(&attachments)
+                    .height(swapchain_extent.height)
+                    .width(swapchain_extent.width)
+                    .layers(1);
+                let framebuffer = unsafe { logical_device.create_framebuffer(&create_info, None)? };
+                Ok::<_, vk::Result>(framebuffer)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(frame_buffers)
     }
 
     /// Configures the attachments and subpasses in the render pass
@@ -780,6 +818,10 @@ impl Drop for App {
                     .debug_utils
                     .destroy_debug_utils_messenger(debug_utils.extension, None)
             };
+        }
+
+        for frame_buffer in &self.frame_buffers {
+            unsafe { self.device.destroy_framebuffer(*frame_buffer, None) }
         }
 
         unsafe {
