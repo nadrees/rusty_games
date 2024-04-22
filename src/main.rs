@@ -9,22 +9,23 @@ use ash::{
     khr::{surface, swapchain},
     vk::{
         self, make_api_version, ApplicationInfo, AttachmentDescription, AttachmentLoadOp,
-        AttachmentReference, AttachmentStoreOp, ColorSpaceKHR, CommandBuffer,
-        CommandBufferAllocateInfo, CommandBufferLevel, CommandPool, CommandPoolCreateFlags,
-        CommandPoolCreateInfo, ComponentMapping, ComponentSwizzle, CompositeAlphaFlagsKHR,
-        CullModeFlags, DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
-        DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, DeviceCreateInfo,
-        DeviceQueueCreateInfo, Extent2D, Format, Framebuffer, FramebufferCreateInfo, FrontFace,
-        GraphicsPipelineCreateInfo, Image, ImageAspectFlags, ImageLayout, ImageSubresourceRange,
-        ImageUsageFlags, ImageView, ImageViewCreateInfo, ImageViewType, InstanceCreateInfo,
-        PhysicalDevice, PhysicalDeviceFeatures, Pipeline, PipelineBindPoint, PipelineCache,
-        PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
-        PipelineInputAssemblyStateCreateInfo, PipelineLayout, PipelineLayoutCreateInfo,
-        PipelineMultisampleStateCreateInfo, PipelineRasterizationStateCreateInfo,
-        PipelineShaderStageCreateInfo, PipelineVertexInputStateCreateInfo,
-        PipelineViewportStateCreateInfo, PolygonMode, PresentModeKHR, PrimitiveTopology, Queue,
-        QueueFlags, Rect2D, RenderPass, RenderPassCreateInfo, SampleCountFlags, ShaderModule,
-        ShaderModuleCreateInfo, ShaderStageFlags, SharingMode, SubpassDescription,
+        AttachmentReference, AttachmentStoreOp, ClearColorValue, ClearValue, ColorSpaceKHR,
+        CommandBuffer, CommandBufferAllocateInfo, CommandBufferBeginInfo, CommandBufferLevel,
+        CommandPool, CommandPoolCreateFlags, CommandPoolCreateInfo, ComponentMapping,
+        ComponentSwizzle, CompositeAlphaFlagsKHR, CullModeFlags, DebugUtilsMessageSeverityFlagsEXT,
+        DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT,
+        DeviceCreateInfo, DeviceQueueCreateInfo, Extent2D, Format, Framebuffer,
+        FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Image, ImageAspectFlags,
+        ImageLayout, ImageSubresourceRange, ImageUsageFlags, ImageView, ImageViewCreateInfo,
+        ImageViewType, InstanceCreateInfo, PhysicalDevice, PhysicalDeviceFeatures, Pipeline,
+        PipelineBindPoint, PipelineCache, PipelineColorBlendAttachmentState,
+        PipelineColorBlendStateCreateInfo, PipelineInputAssemblyStateCreateInfo, PipelineLayout,
+        PipelineLayoutCreateInfo, PipelineMultisampleStateCreateInfo,
+        PipelineRasterizationStateCreateInfo, PipelineShaderStageCreateInfo,
+        PipelineVertexInputStateCreateInfo, PipelineViewportStateCreateInfo, PolygonMode,
+        PresentModeKHR, PrimitiveTopology, Queue, QueueFlags, Rect2D, RenderPass,
+        RenderPassBeginInfo, RenderPassCreateInfo, SampleCountFlags, ShaderModule,
+        ShaderModuleCreateInfo, ShaderStageFlags, SharingMode, SubpassContents, SubpassDescription,
         SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR,
         Viewport, API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
     },
@@ -74,7 +75,7 @@ struct App {
     /// The actual window presented to the user
     /// Need to keep a reference to this for the life
     /// off the app or it will get cleaned up
-    _window: Window,
+    window: Window,
     /// See surface manager struct docs
     surface_manager: SurfaceManager,
     /// The linkage to the DLL for vulkan
@@ -165,7 +166,7 @@ impl App {
             device: logical_device,
             _queues: queue_handles,
             instance,
-            _window: window,
+            window,
             surface_manager,
             swapchain_manager,
             _images: images,
@@ -189,6 +190,50 @@ impl App {
             }
             _ => {}
         })?;
+        Ok(())
+    }
+
+    /// Records the command buffer for execution
+    fn record_command_buffer(&self, image_index: usize) -> Result<()> {
+        let command_buffer_begin_info = CommandBufferBeginInfo::default();
+        unsafe {
+            self.device
+                .begin_command_buffer(self.command_buffer, &command_buffer_begin_info)?
+        };
+
+        let swapchain_extent = self
+            .swapchain_manager
+            .support_details
+            .choose_swap_extent(&self.window);
+        let render_area = Rect2D::default().extent(swapchain_extent);
+
+        let mut clear_value = ClearValue::default();
+        clear_value.color = ClearColorValue {
+            uint32: [0, 0, 0, 1],
+        };
+        let clear_values = [clear_value];
+
+        let render_pass_begin_info = RenderPassBeginInfo::default()
+            .render_pass(self.render_pass)
+            .framebuffer(self.frame_buffers[image_index])
+            .render_area(render_area)
+            .clear_values(&clear_values);
+        unsafe {
+            self.device.cmd_begin_render_pass(
+                self.command_buffer,
+                &render_pass_begin_info,
+                SubpassContents::INLINE,
+            );
+            self.device.cmd_bind_pipeline(
+                self.command_buffer,
+                PipelineBindPoint::GRAPHICS,
+                self.pipeline,
+            );
+            self.device.cmd_draw(self.command_buffer, 3, 1, 0, 0);
+            self.device.cmd_end_render_pass(self.command_buffer);
+            self.device.end_command_buffer(self.command_buffer)?;
+        };
+
         Ok(())
     }
 
