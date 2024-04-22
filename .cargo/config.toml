@@ -1,3 +1,0 @@
-[target.x86_64-pc-windows-msvc.glfw]
-rustc-link-lib = ["glfw"]
-rustc-link-search = ["D:\\Projects\\rusty_games\\deps\\x86_64-pc-windows-msvc"]
