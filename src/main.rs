@@ -8,12 +8,12 @@ use ash::{
     ext::debug_utils,
     khr::{surface, swapchain},
     vk::{
-        self, make_api_version, ApplicationInfo, AttachmentDescription, AttachmentLoadOp,
-        AttachmentReference, AttachmentStoreOp, ClearColorValue, ClearValue, ColorSpaceKHR,
-        CommandBuffer, CommandBufferAllocateInfo, CommandBufferBeginInfo, CommandBufferLevel,
-        CommandBufferResetFlags, CommandPool, CommandPoolCreateFlags, CommandPoolCreateInfo,
-        ComponentMapping, ComponentSwizzle, CompositeAlphaFlagsKHR, CullModeFlags,
-        DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
+        self, make_api_version, AccessFlags, ApplicationInfo, AttachmentDescription,
+        AttachmentLoadOp, AttachmentReference, AttachmentStoreOp, ClearColorValue, ClearValue,
+        ColorSpaceKHR, CommandBuffer, CommandBufferAllocateInfo, CommandBufferBeginInfo,
+        CommandBufferLevel, CommandBufferResetFlags, CommandPool, CommandPoolCreateFlags,
+        CommandPoolCreateInfo, ComponentMapping, ComponentSwizzle, CompositeAlphaFlagsKHR,
+        CullModeFlags, DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
         DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, DeviceCreateInfo,
         DeviceQueueCreateInfo, Extent2D, Fence, FenceCreateFlags, FenceCreateInfo, Format,
         Framebuffer, FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Image,
@@ -24,12 +24,13 @@ use ash::{
         PipelineInputAssemblyStateCreateInfo, PipelineLayout, PipelineLayoutCreateInfo,
         PipelineMultisampleStateCreateInfo, PipelineRasterizationStateCreateInfo,
         PipelineShaderStageCreateInfo, PipelineStageFlags, PipelineVertexInputStateCreateInfo,
-        PipelineViewportStateCreateInfo, PolygonMode, PresentModeKHR, PrimitiveTopology, Queue,
-        QueueFlags, Rect2D, RenderPass, RenderPassBeginInfo, RenderPassCreateInfo,
-        SampleCountFlags, Semaphore, SemaphoreCreateInfo, ShaderModule, ShaderModuleCreateInfo,
-        ShaderStageFlags, SharingMode, SubmitInfo, SubpassContents, SubpassDescription,
-        SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR,
-        Viewport, API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
+        PipelineViewportStateCreateInfo, PolygonMode, PresentInfoKHR, PresentModeKHR,
+        PrimitiveTopology, Queue, QueueFlags, Rect2D, RenderPass, RenderPassBeginInfo,
+        RenderPassCreateInfo, SampleCountFlags, Semaphore, SemaphoreCreateInfo, ShaderModule,
+        ShaderModuleCreateInfo, ShaderStageFlags, SharingMode, SubmitInfo, SubpassContents,
+        SubpassDependency, SubpassDescription, SurfaceCapabilitiesKHR, SurfaceFormatKHR,
+        SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR, Viewport, API_VERSION_1_3,
+        KHR_SWAPCHAIN_NAME, SUBPASS_EXTERNAL,
     },
     Device, Entry, Instance,
 };
@@ -40,7 +41,7 @@ use winit::{
     event::{Event, WindowEvent},
     event_loop::EventLoop,
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
-    window::{Window, WindowBuilder},
+    window::{Window, WindowBuilder, WindowButtons},
 };
 
 const API_VERSION: u32 = API_VERSION_1_3;
@@ -214,6 +215,7 @@ impl App {
     }
 
     fn draw_frame(&self) -> Result<()> {
+        trace!("Drawing a frame!");
         let fences = [self.in_flight_fence];
         unsafe {
             // wait for previous draw to complete
@@ -246,6 +248,18 @@ impl App {
             self.device
                 .queue_submit(self.queues.graphics, &submit_info, self.in_flight_fence)?
         }
+
+        let swapchains = [self.swapchain_manager.swapchain];
+        let image_indicies = [image_index];
+        let present_info = PresentInfoKHR::default()
+            .wait_semaphores(&signal_semaphores)
+            .swapchains(&swapchains)
+            .image_indices(&image_indicies);
+        unsafe {
+            self.swapchain_manager
+                .device
+                .queue_present(self.queues.present, &present_info)?
+        };
 
         Ok(())
     }
@@ -299,6 +313,7 @@ impl App {
         let window = WindowBuilder::new()
             .with_inner_size(PhysicalSize::<u32>::from((WINDOW_WIDTH, WINDOW_HEIGHT)))
             .with_resizable(false)
+            .with_enabled_buttons(WindowButtons::CLOSE)
             .with_active(true)
             .with_title(WINDOW_TITLE)
             .build(&event_loop)?;
@@ -416,9 +431,18 @@ impl App {
             .pipeline_bind_point(PipelineBindPoint::GRAPHICS)
             .color_attachments(&attachment_ref)];
 
+        let subpass_dependencies = [SubpassDependency::default()
+            .src_subpass(SUBPASS_EXTERNAL)
+            .dst_subpass(0)
+            .src_stage_mask(PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .src_access_mask(AccessFlags::empty())
+            .dst_stage_mask(PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .dst_access_mask(AccessFlags::COLOR_ATTACHMENT_WRITE)];
+
         let render_pass_create_info = RenderPassCreateInfo::default()
             .attachments(&attachment_description)
-            .subpasses(&subpass_description);
+            .subpasses(&subpass_description)
+            .dependencies(&subpass_dependencies);
 
         let render_pass =
             unsafe { logical_device.create_render_pass(&render_pass_create_info, None)? };
@@ -777,7 +801,7 @@ impl App {
             unsafe { logical_device.get_device_queue(indicies.present_family.unwrap() as u32, 0) };
         let queue_handles = QueueHandles {
             graphics: graphics_queue_handle,
-            _present: present_queue_handle,
+            present: present_queue_handle,
         };
 
         Ok((logical_device, queue_handles))
@@ -1051,7 +1075,7 @@ impl QueueFamilyIndicies {
 /// device initialization.
 struct QueueHandles {
     graphics: Queue,
-    _present: Queue,
+    present: Queue,
 }
 
 /// Struct for creating and managing surfaces
