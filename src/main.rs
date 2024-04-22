@@ -8,21 +8,23 @@ use ash::{
     ext::debug_utils,
     khr::{surface, swapchain},
     vk::{
-        self, make_api_version, ApplicationInfo, ColorSpaceKHR, ComponentMapping, ComponentSwizzle,
+        self, make_api_version, ApplicationInfo, AttachmentDescription, AttachmentLoadOp,
+        AttachmentReference, AttachmentStoreOp, ColorSpaceKHR, ComponentMapping, ComponentSwizzle,
         CompositeAlphaFlagsKHR, CullModeFlags, DebugUtilsMessageSeverityFlagsEXT,
         DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT,
-        DeviceCreateInfo, DeviceQueueCreateInfo, DynamicState, Extent2D, Format, FrontFace, Image,
-        ImageAspectFlags, ImageSubresourceRange, ImageUsageFlags, ImageView, ImageViewCreateInfo,
-        ImageViewType, InstanceCreateInfo, PhysicalDevice, PhysicalDeviceFeatures,
+        DeviceCreateInfo, DeviceQueueCreateInfo, Extent2D, Format, FrontFace,
+        GraphicsPipelineCreateInfo, Image, ImageAspectFlags, ImageLayout, ImageSubresourceRange,
+        ImageUsageFlags, ImageView, ImageViewCreateInfo, ImageViewType, InstanceCreateInfo,
+        PhysicalDevice, PhysicalDeviceFeatures, Pipeline, PipelineBindPoint, PipelineCache,
         PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
-        PipelineDynamicStateCreateInfo, PipelineInputAssemblyStateCreateInfo, PipelineLayout,
-        PipelineLayoutCreateInfo, PipelineMultisampleStateCreateInfo,
-        PipelineRasterizationStateCreateInfo, PipelineShaderStageCreateInfo,
-        PipelineVertexInputStateCreateInfo, PipelineViewportStateCreateInfo, PolygonMode,
-        PresentModeKHR, PrimitiveTopology, Queue, QueueFlags, Rect2D, ShaderModule,
-        ShaderModuleCreateInfo, ShaderStageFlags, SharingMode, SurfaceCapabilitiesKHR,
-        SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR, Viewport,
-        API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
+        PipelineInputAssemblyStateCreateInfo, PipelineLayout, PipelineLayoutCreateInfo,
+        PipelineMultisampleStateCreateInfo, PipelineRasterizationStateCreateInfo,
+        PipelineShaderStageCreateInfo, PipelineVertexInputStateCreateInfo,
+        PipelineViewportStateCreateInfo, PolygonMode, PresentModeKHR, PrimitiveTopology, Queue,
+        QueueFlags, Rect2D, RenderPass, RenderPassCreateInfo, SampleCountFlags, ShaderModule,
+        ShaderModuleCreateInfo, ShaderStageFlags, SharingMode, SubpassDescription,
+        SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR,
+        Viewport, API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
     },
     Device, Entry, Instance,
 };
@@ -81,8 +83,12 @@ struct App {
     _images: Vec<Image>,
     /// Views to interact with the images
     image_views: Vec<ImageView>,
+    /// render pass configuration for graphics pipeline
+    render_pass: RenderPass,
     /// layout for dynamic variables within the graphics pipeline
     pipeline_layout: PipelineLayout,
+    /// The graphics pipeline itself
+    pipeline: Pipeline,
 }
 
 impl App {
@@ -113,6 +119,15 @@ impl App {
         // configure graphics pipeline
         let shader_modules = Self::create_shader_modules(&logical_device)?;
         let pipeline_layout = Self::create_pipeline_layout(&logical_device)?;
+        let render_pass = Self::create_render_pass(&logical_device, &swapchain_manager)?;
+        let pipeline = Self::create_graphics_pipeline(
+            &logical_device,
+            &pipeline_layout,
+            &render_pass,
+            &shader_modules,
+            &swapchain_manager,
+            &window,
+        )?;
 
         for (shader_module, _) in shader_modules {
             unsafe { logical_device.destroy_shader_module(shader_module, None) }
@@ -129,7 +144,9 @@ impl App {
             swapchain_manager,
             _images: images,
             image_views,
+            render_pass,
             pipeline_layout,
+            pipeline,
         })
     }
 
@@ -157,6 +174,52 @@ impl App {
         Ok(window)
     }
 
+    /// Configures the attachments and subpasses in the render pass
+    fn create_render_pass(
+        logical_device: &Device,
+        swapchain_manager: &SwapChainManager,
+    ) -> Result<RenderPass> {
+        let attachment_description = [AttachmentDescription::default()
+            // ensure attachment format matches that of swapchain
+            .format(
+                swapchain_manager
+                    .support_details
+                    .choose_swap_surface_format()
+                    .format,
+            )
+            // not using multisampling, so stick to 1 sample
+            .samples(SampleCountFlags::TYPE_1)
+            // clear the data in the attachment before rendering
+            .load_op(AttachmentLoadOp::CLEAR)
+            // dont care about layout of previous image, because we're clearing it
+            // anyway
+            .initial_layout(ImageLayout::UNDEFINED)
+            // store the results in memory for later user after rendering
+            .store_op(AttachmentStoreOp::STORE)
+            // transition to a layout suitable for presentation
+            .final_layout(ImageLayout::PRESENT_SRC_KHR)
+            // not using stencils
+            .stencil_load_op(AttachmentLoadOp::DONT_CARE)
+            .stencil_store_op(AttachmentStoreOp::DONT_CARE)];
+
+        let attachment_ref = [AttachmentReference::default()
+            .attachment(0)
+            .layout(ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
+
+        let subpass_description = [SubpassDescription::default()
+            .pipeline_bind_point(PipelineBindPoint::GRAPHICS)
+            .color_attachments(&attachment_ref)];
+
+        let render_pass_create_info = RenderPassCreateInfo::default()
+            .attachments(&attachment_description)
+            .subpasses(&subpass_description);
+
+        let render_pass =
+            unsafe { logical_device.create_render_pass(&render_pass_create_info, None)? };
+
+        Ok(render_pass)
+    }
+
     /// Creates the pipeline layout for passing dynamic values to the pipeline
     fn create_pipeline_layout(logical_device: &Device) -> Result<PipelineLayout> {
         let pipeline_layout_create_info = PipelineLayoutCreateInfo::default();
@@ -169,17 +232,13 @@ impl App {
     /// in creating the graphics pipeline
     fn create_shader_modules<'a>(
         logical_device: &Device,
-    ) -> Result<[(ShaderModule, PipelineShaderStageCreateInfo<'a>); 2]> {
+    ) -> Result<[(ShaderModule, ShaderStageFlags); 2]> {
         let vertex_shader_code = include_bytes!("../target/shaders/vert.spv");
         ensure!(
             vertex_shader_code.len() % 4 == 0,
             "Invalid vertex shader code read!"
         );
         let vertex_shader_module = Self::create_shader_module(logical_device, vertex_shader_code)?;
-        let pipeline_vertex_shader_stage_create_info = PipelineShaderStageCreateInfo::default()
-            .stage(ShaderStageFlags::VERTEX)
-            .module(vertex_shader_module)
-            .name(&CStr::from_bytes_with_nul(b"main\0")?);
 
         let fragment_shader_code = include_bytes!("../target/shaders/frag.spv");
         ensure!(
@@ -188,28 +247,33 @@ impl App {
         );
         let fragment_shader_module =
             Self::create_shader_module(logical_device, fragment_shader_code)?;
-        let pipeline_fragment_shader_stage_create_info = PipelineShaderStageCreateInfo::default()
-            .stage(ShaderStageFlags::FRAGMENT)
-            .module(fragment_shader_module)
-            .name(&CStr::from_bytes_with_nul(b"main\0")?);
 
         Ok([
-            (
-                vertex_shader_module,
-                pipeline_vertex_shader_stage_create_info,
-            ),
-            (
-                fragment_shader_module,
-                pipeline_fragment_shader_stage_create_info,
-            ),
+            (vertex_shader_module, ShaderStageFlags::VERTEX),
+            (fragment_shader_module, ShaderStageFlags::FRAGMENT),
         ])
     }
 
     /// Configures the fixed function stages and creates a graphics pipeline to start submitting commands to
     fn create_graphics_pipeline(
+        logical_device: &Device,
+        pipeline_layout: &PipelineLayout,
+        render_pass: &RenderPass,
+        shader_stages: &[(ShaderModule, ShaderStageFlags)],
         swapchain_manager: &SwapChainManager,
         window: &Window,
-    ) -> Result<()> {
+    ) -> Result<Pipeline> {
+        let shader_entrypoint_name = CStr::from_bytes_with_nul(b"main\0")?;
+        let shader_stage_create_infos = shader_stages
+            .into_iter()
+            .map(|(shader_module, shader_stage)| {
+                PipelineShaderStageCreateInfo::default()
+                    .stage(*shader_stage)
+                    .module(*shader_module)
+                    .name(&shader_entrypoint_name)
+            })
+            .collect::<Vec<_>>();
+
         // we're not using vertex buffers, so just an empty object
         let pipeline_vertex_input_state_create_info = PipelineVertexInputStateCreateInfo::default();
 
@@ -221,20 +285,20 @@ impl App {
 
         // default viewport covering entire swapchain extent, no depth filtering
         let swapchain_extent = swapchain_manager.support_details.choose_swap_extent(window);
-        let viewport = Viewport::default()
+        let viewport = [Viewport::default()
             .x(0.0f32)
             .y(0.0f32)
             .width(swapchain_extent.width as f32)
             .height(swapchain_extent.height as f32)
             .min_depth(0.0f32)
-            .max_depth(1.0f32);
+            .max_depth(1.0f32)];
 
         // default scissor, doing nothing
-        let scissor = Rect2D::default().extent(swapchain_extent);
+        let scissor = [Rect2D::default().extent(swapchain_extent)];
 
         let viewport_create_info = PipelineViewportStateCreateInfo::default()
-            .viewports(&[viewport])
-            .scissors(&[scissor]);
+            .viewports(&viewport)
+            .scissors(&scissor);
 
         let rasteratization_create_info = PipelineRasterizationStateCreateInfo::default()
             // setting this to false discards points before the near plane or after the far plane
@@ -256,20 +320,41 @@ impl App {
             .depth_bias_enable(false);
 
         // disable multisampling
-        let multisampling_state_create_info =
-            PipelineMultisampleStateCreateInfo::default().sample_shading_enable(false);
+        let multisampling_state_create_info = PipelineMultisampleStateCreateInfo::default()
+            .sample_shading_enable(false)
+            .rasterization_samples(SampleCountFlags::TYPE_1);
 
         // settings for color blending per framebuffer. disable this for now, resulting in color output
         // from vertex shader passing thru
         let color_blend_attachment_state =
-            PipelineColorBlendAttachmentState::default().blend_enable(false);
+            [PipelineColorBlendAttachmentState::default().blend_enable(false)];
 
         // settings for global color blending. disable this as well.
         let pipeline_color_blend_state = PipelineColorBlendStateCreateInfo::default()
             .logic_op_enable(false)
-            .attachments(&[color_blend_attachment_state]);
+            .attachments(&color_blend_attachment_state);
 
-        Ok(())
+        let graphics_pipeline_create_info = [GraphicsPipelineCreateInfo::default()
+            .stages(&shader_stage_create_infos)
+            .vertex_input_state(&pipeline_vertex_input_state_create_info)
+            .input_assembly_state(&pipeline_input_assembly_state_create_info)
+            .render_pass(*render_pass)
+            .color_blend_state(&pipeline_color_blend_state)
+            .multisample_state(&multisampling_state_create_info)
+            .viewport_state(&viewport_create_info)
+            .rasterization_state(&rasteratization_create_info)
+            .layout(*pipeline_layout)];
+
+        let graphics_pipeline = unsafe {
+            logical_device.create_graphics_pipelines(
+                PipelineCache::null(),
+                &graphics_pipeline_create_info,
+                None,
+            )
+        }
+        .map_err(|(_, r)| r)?;
+
+        Ok(graphics_pipeline[0])
     }
 
     /// Reads in the raw bytes and creates a shader module from the read byte code
@@ -698,8 +783,10 @@ impl Drop for App {
         }
 
         unsafe {
+            self.device.destroy_pipeline(self.pipeline, None);
+            self.device.destroy_render_pass(self.render_pass, None);
             self.device
-                .destroy_pipeline_layout(self.pipeline_layout, None)
+                .destroy_pipeline_layout(self.pipeline_layout, None);
         }
 
         for image_view in &self.image_views {
