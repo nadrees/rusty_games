@@ -39,7 +39,7 @@ use tracing::{debug, info, trace};
 use winit::{
     dpi::PhysicalSize,
     event::{Event, WindowEvent},
-    event_loop::EventLoop,
+    event_loop::{ControlFlow, EventLoop},
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
     window::{Window, WindowBuilder, WindowButtons},
 };
@@ -196,6 +196,7 @@ impl App {
     }
 
     pub fn run(&mut self, event_loop: EventLoop<()>) -> Result<()> {
+        event_loop.set_control_flow(ControlFlow::Poll);
         event_loop.run(move |event, elwp| match event {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
@@ -203,10 +204,7 @@ impl App {
             } => {
                 elwp.exit();
             }
-            Event::WindowEvent {
-                window_id: _,
-                event: WindowEvent::RedrawRequested,
-            } => {
+            Event::AboutToWait => {
                 self.draw_frame().unwrap();
             }
             Event::LoopExiting => {
@@ -219,7 +217,6 @@ impl App {
     }
 
     fn draw_frame(&self) -> Result<()> {
-        trace!("Drawing a frame!");
         let fences = [self.in_flight_fence];
         unsafe {
             // wait for previous draw to complete
