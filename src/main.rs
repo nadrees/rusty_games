@@ -13,9 +13,9 @@ use ash::{
         DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, DeviceCreateInfo,
         DeviceQueueCreateInfo, Extent2D, Format, Image, ImageAspectFlags, ImageSubresourceRange,
         ImageUsageFlags, ImageView, ImageViewCreateInfo, ImageViewType, InstanceCreateInfo,
-        PhysicalDevice, PhysicalDeviceFeatures, PresentModeKHR, Queue, QueueFlags, SharingMode,
-        SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR,
-        API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
+        PhysicalDevice, PhysicalDeviceFeatures, PresentModeKHR, Queue, QueueFlags, ShaderModule,
+        ShaderModuleCreateInfo, SharingMode, SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR,
+        SwapchainCreateInfoKHR, SwapchainKHR, API_VERSION_1_3, KHR_SWAPCHAIN_NAME,
     },
     Device, Entry, Instance,
 };
@@ -98,6 +98,7 @@ impl App {
         )?;
         let images = swapchain_manager.get_swapchain_images()?;
         let image_views = Self::create_image_views(&logical_device, &swapchain_manager, &images)?;
+        Self::create_graphics_pipeline(&logical_device)?;
 
         Ok(Self {
             _entry: entry,
@@ -135,6 +136,46 @@ impl App {
             .with_title(WINDOW_TITLE)
             .build(&event_loop)?;
         Ok(window)
+    }
+
+    /// Loads the shaders and creates a graphics pipeline to start submitting commands to
+    fn create_graphics_pipeline(logical_device: &Device) -> Result<()> {
+        let vertex_shader_code = include_bytes!("../target/shaders/vert.spv");
+        ensure!(
+            vertex_shader_code.len() % 4 == 0,
+            "Invalid vertex shader code read!"
+        );
+        let vertex_shader_module = Self::create_shader_module(logical_device, vertex_shader_code)?;
+
+        let fragment_shader_code = include_bytes!("../target/shaders/frag.spv");
+        ensure!(
+            fragment_shader_code.len() % 4 == 0,
+            "Invalid fragment shader code read!"
+        );
+        let fragment_shader_module =
+            Self::create_shader_module(logical_device, fragment_shader_code)?;
+
+        unsafe {
+            logical_device.destroy_shader_module(vertex_shader_module, None);
+            logical_device.destroy_shader_module(fragment_shader_module, None);
+        }
+
+        Ok(())
+    }
+
+    /// Reads in the raw bytes and creates a shader module from the read byte code
+    fn create_shader_module(logical_device: &Device, code: &[u8]) -> Result<ShaderModule> {
+        let code = code
+            .chunks_exact(4)
+            .map(|chunks| {
+                let chunks = [chunks[0], chunks[1], chunks[2], chunks[3]];
+                u32::from_ne_bytes(chunks)
+            })
+            .collect::<Vec<_>>();
+        let shader_module_create_info = ShaderModuleCreateInfo::default().code(&code);
+        let shader_module =
+            unsafe { logical_device.create_shader_module(&shader_module_create_info, None)? };
+        Ok(shader_module)
     }
 
     /// Creates Image views from the provided images
