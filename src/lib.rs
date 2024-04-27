@@ -1,8 +1,11 @@
+mod instance;
+
 use anyhow::Result;
 use ash::vk::{
     Bool32, DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
-    DebugUtilsMessengerCallbackDataEXT,
+    DebugUtilsMessengerCallbackDataEXT, DebugUtilsMessengerCreateInfoEXT,
 };
+pub use instance::Instance;
 use simple_logger::{set_up_color_terminal, SimpleLogger};
 use tracing::{event, Level};
 
@@ -45,4 +48,22 @@ pub unsafe extern "system" fn vulkan_debug_utils_callback(
     }
     // dont skip driver
     ash::vk::FALSE
+}
+
+/// Configures the DebugUtils extension for which message types and severity levels to
+/// log.
+fn get_debug_messenger_create_info<'a>() -> DebugUtilsMessengerCreateInfoEXT<'a> {
+    DebugUtilsMessengerCreateInfoEXT::default()
+        .message_severity(
+            DebugUtilsMessageSeverityFlagsEXT::VERBOSE
+                | DebugUtilsMessageSeverityFlagsEXT::INFO
+                | DebugUtilsMessageSeverityFlagsEXT::WARNING
+                | DebugUtilsMessageSeverityFlagsEXT::ERROR,
+        )
+        .message_type(
+            DebugUtilsMessageTypeFlagsEXT::GENERAL
+                | DebugUtilsMessageTypeFlagsEXT::PERFORMANCE
+                | DebugUtilsMessageTypeFlagsEXT::VALIDATION,
+        )
+        .pfn_user_callback(Some(vulkan_debug_utils_callback))
 }

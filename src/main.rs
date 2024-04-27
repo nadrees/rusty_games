@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    ffi::{c_char, CStr, CString},
+    ffi::{CStr, CString},
 };
 
 use anyhow::{anyhow, ensure, Result};
@@ -8,34 +8,33 @@ use ash::{
     ext::debug_utils,
     khr::{surface, swapchain},
     vk::{
-        self, make_api_version, AccessFlags, ApplicationInfo, AttachmentDescription,
-        AttachmentLoadOp, AttachmentReference, AttachmentStoreOp, ClearColorValue, ClearValue,
-        ColorComponentFlags, ColorSpaceKHR, CommandBuffer, CommandBufferAllocateInfo,
-        CommandBufferBeginInfo, CommandBufferLevel, CommandBufferResetFlags, CommandPool,
-        CommandPoolCreateFlags, CommandPoolCreateInfo, ComponentMapping, ComponentSwizzle,
-        CompositeAlphaFlagsKHR, CullModeFlags, DebugUtilsMessageSeverityFlagsEXT,
-        DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT,
-        DeviceCreateInfo, DeviceQueueCreateInfo, Extent2D, Fence, FenceCreateFlags,
-        FenceCreateInfo, Format, Framebuffer, FramebufferCreateInfo, FrontFace,
-        GraphicsPipelineCreateInfo, Image, ImageAspectFlags, ImageLayout, ImageSubresourceRange,
-        ImageUsageFlags, ImageView, ImageViewCreateInfo, ImageViewType, InstanceCreateInfo,
-        PhysicalDevice, PhysicalDeviceFeatures, Pipeline, PipelineBindPoint, PipelineCache,
-        PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
-        PipelineInputAssemblyStateCreateInfo, PipelineLayout, PipelineLayoutCreateInfo,
-        PipelineMultisampleStateCreateInfo, PipelineRasterizationStateCreateInfo,
-        PipelineShaderStageCreateInfo, PipelineStageFlags, PipelineVertexInputStateCreateInfo,
-        PipelineViewportStateCreateInfo, PolygonMode, PresentInfoKHR, PresentModeKHR,
-        PrimitiveTopology, Queue, QueueFlags, Rect2D, RenderPass, RenderPassBeginInfo,
-        RenderPassCreateInfo, SampleCountFlags, Semaphore, SemaphoreCreateInfo, ShaderModule,
-        ShaderModuleCreateInfo, ShaderStageFlags, SharingMode, SubmitInfo, SubpassContents,
-        SubpassDependency, SubpassDescription, SurfaceCapabilitiesKHR, SurfaceFormatKHR,
-        SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR, Viewport, API_VERSION_1_3,
+        self, AccessFlags, AttachmentDescription, AttachmentLoadOp, AttachmentReference,
+        AttachmentStoreOp, ClearColorValue, ClearValue, ColorComponentFlags, ColorSpaceKHR,
+        CommandBuffer, CommandBufferAllocateInfo, CommandBufferBeginInfo, CommandBufferLevel,
+        CommandBufferResetFlags, CommandPool, CommandPoolCreateFlags, CommandPoolCreateInfo,
+        ComponentMapping, ComponentSwizzle, CompositeAlphaFlagsKHR, CullModeFlags,
+        DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
+        DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, DeviceCreateInfo,
+        DeviceQueueCreateInfo, Extent2D, Fence, FenceCreateFlags, FenceCreateInfo, Format,
+        Framebuffer, FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Image,
+        ImageAspectFlags, ImageLayout, ImageSubresourceRange, ImageUsageFlags, ImageView,
+        ImageViewCreateInfo, ImageViewType, PhysicalDevice, PhysicalDeviceFeatures, Pipeline,
+        PipelineBindPoint, PipelineCache, PipelineColorBlendAttachmentState,
+        PipelineColorBlendStateCreateInfo, PipelineInputAssemblyStateCreateInfo, PipelineLayout,
+        PipelineLayoutCreateInfo, PipelineMultisampleStateCreateInfo,
+        PipelineRasterizationStateCreateInfo, PipelineShaderStageCreateInfo, PipelineStageFlags,
+        PipelineVertexInputStateCreateInfo, PipelineViewportStateCreateInfo, PolygonMode,
+        PresentInfoKHR, PresentModeKHR, PrimitiveTopology, Queue, QueueFlags, Rect2D, RenderPass,
+        RenderPassBeginInfo, RenderPassCreateInfo, SampleCountFlags, Semaphore,
+        SemaphoreCreateInfo, ShaderModule, ShaderModuleCreateInfo, ShaderStageFlags, SharingMode,
+        SubmitInfo, SubpassContents, SubpassDependency, SubpassDescription, SurfaceCapabilitiesKHR,
+        SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR, Viewport,
         KHR_SWAPCHAIN_NAME, SUBPASS_EXTERNAL,
     },
-    Device, Entry, Instance,
+    Device, Entry,
 };
-use rusty_games::{init_logging, vulkan_debug_utils_callback};
-use tracing::{debug, info, trace};
+use rusty_games::{init_logging, vulkan_debug_utils_callback, Instance};
+use tracing::{info, trace};
 use winit::{
     dpi::PhysicalSize,
     event::{Event, WindowEvent},
@@ -44,7 +43,6 @@ use winit::{
     window::{Window, WindowBuilder, WindowButtons},
 };
 
-const API_VERSION: u32 = API_VERSION_1_3;
 const REQUIRED_DEVICE_EXTENSIONS: &[&CStr] = &[KHR_SWAPCHAIN_NAME];
 const WINDOW_WIDTH: u32 = 800;
 const WINDOW_HEIGHT: u32 = 600;
@@ -74,7 +72,7 @@ struct App {
     /// The debug utils extension, if enabled
     debug_utils: Option<DebugUtilsExt>,
     /// The instance for interacting with Vulkan core
-    instance: Instance,
+    _instance: Instance,
     /// The actual window presented to the user
     /// Need to keep a reference to this for the life
     /// off the app or it will get cleaned up
@@ -114,13 +112,16 @@ struct App {
 impl App {
     pub fn new(event_loop: &EventLoop<()>) -> Result<Self> {
         let required_extensions =
-            ash_window::enumerate_required_extensions(event_loop.display_handle()?.as_raw())?;
+            ash_window::enumerate_required_extensions(event_loop.display_handle()?.as_raw())?
+                .into_iter()
+                .map(|extension| unsafe { CStr::from_ptr(*extension) }.to_str())
+                .collect::<Result<Vec<_>, _>>()?;
 
         let window = Self::init_window(&event_loop)?;
 
         // init vulkan
         let entry = Entry::linked();
-        let instance = Self::create_instance(&entry, required_extensions)?;
+        let instance = Instance::new(&entry, required_extensions)?;
         let debug_utils = Self::setup_debug_messenger(&entry, &instance)?;
         let surface_manager = Self::create_surface_manager(&entry, &instance, &window)?;
         let physical_device = Self::pick_physical_device(&instance, &surface_manager)?;
@@ -177,7 +178,7 @@ impl App {
             debug_utils,
             device: logical_device,
             queues: queue_handles,
-            instance,
+            _instance: instance,
             window,
             surface_manager,
             swapchain_manager,
@@ -899,71 +900,6 @@ impl App {
         Ok(true)
     }
 
-    /// Creates an Instance to interact with the core of Vulkan. Registers the needed extensions and
-    /// layers, as well as basic information about the application.
-    fn create_instance(entry: &Entry, required_extensions: &[*const c_char]) -> Result<Instance> {
-        let appname = CString::new(env!("CARGO_PKG_NAME"))?;
-        let version_major = env!("CARGO_PKG_VERSION_MAJOR").parse::<u32>()?;
-        let version_minor = env!("CARGO_PKG_VERSION_MINOR").parse::<u32>()?;
-        let version_patch = env!("CARGO_PKG_VERSION_PATCH").parse::<u32>()?;
-        let app_version = make_api_version(0, version_major, version_minor, version_patch);
-
-        let app_info = ApplicationInfo::default()
-            .application_name(&appname)
-            .application_version(app_version)
-            .api_version(API_VERSION)
-            .engine_name(&appname)
-            .engine_version(app_version);
-
-        let enabled_extension_names = Self::get_required_instance_extensions(required_extensions)?;
-
-        let enabled_layer_names = Self::gen_required_layers()
-            .into_iter()
-            .map(|layer_name| CString::new(layer_name))
-            .collect::<Result<Vec<_>, _>>()?;
-        let enabled_layer_name_pts = enabled_layer_names
-            .iter()
-            .map(|layer_name| layer_name.as_ptr())
-            .collect::<Vec<_>>();
-
-        let mut debug_messenger_create_info = Self::get_debug_messenger_create_info();
-
-        let instance_create_info = InstanceCreateInfo::default()
-            .application_info(&app_info)
-            .enabled_extension_names(&enabled_extension_names)
-            .enabled_layer_names(&enabled_layer_name_pts)
-            .push_next(&mut debug_messenger_create_info);
-
-        let instance = unsafe { entry.create_instance(&instance_create_info, None)? };
-
-        Ok(instance)
-    }
-
-    /// Returns the required layers needed for Vulkan. Notably, includes the validation
-    /// layer if validations are enabled.
-    fn gen_required_layers() -> Vec<String> {
-        let mut layer_names = vec![];
-        if ENABLE_VALIDATIONS {
-            layer_names = vec!["VK_LAYER_KHRONOS_validation".to_owned()];
-        }
-        debug!("Layers to enable: {}", layer_names.join(", "));
-        return layer_names;
-    }
-
-    /// Returns the needed instance exensions for Vulkan to function correctly.
-    /// These always require the extensions necessary to interact with the native
-    /// windowing system, and may include optional validation extensions if validations
-    /// are enabled.
-    fn get_required_instance_extensions(
-        required_extensions: &[*const c_char],
-    ) -> Result<Vec<*const c_char>> {
-        let mut enabled_extension_names: Vec<*const c_char> = Vec::from(required_extensions);
-        if ENABLE_VALIDATIONS {
-            enabled_extension_names.push(debug_utils::NAME.as_ptr());
-        }
-        Ok(enabled_extension_names)
-    }
-
     /// Configures the DebugUtils extension for which message types and severity levels to
     /// log.
     fn get_debug_messenger_create_info<'a>() -> DebugUtilsMessengerCreateInfoEXT<'a> {
@@ -1042,7 +978,6 @@ impl Drop for App {
 
         unsafe {
             self.device.destroy_device(None);
-            self.instance.destroy_instance(None);
         }
     }
 }
