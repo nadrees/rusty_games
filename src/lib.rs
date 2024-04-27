@@ -52,7 +52,7 @@ pub unsafe extern "system" fn vulkan_debug_utils_callback(
 
 /// Configures the DebugUtils extension for which message types and severity levels to
 /// log.
-fn get_debug_messenger_create_info<'a>() -> DebugUtilsMessengerCreateInfoEXT<'a> {
+pub fn get_debug_messenger_create_info<'a>() -> DebugUtilsMessengerCreateInfoEXT<'a> {
     DebugUtilsMessengerCreateInfoEXT::default()
         .message_severity(
             DebugUtilsMessageSeverityFlagsEXT::VERBOSE

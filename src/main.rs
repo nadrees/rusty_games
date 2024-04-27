@@ -13,27 +13,26 @@ use ash::{
         CommandBuffer, CommandBufferAllocateInfo, CommandBufferBeginInfo, CommandBufferLevel,
         CommandBufferResetFlags, CommandPool, CommandPoolCreateFlags, CommandPoolCreateInfo,
         ComponentMapping, ComponentSwizzle, CompositeAlphaFlagsKHR, CullModeFlags,
-        DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
-        DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, DeviceCreateInfo,
-        DeviceQueueCreateInfo, Extent2D, Fence, FenceCreateFlags, FenceCreateInfo, Format,
-        Framebuffer, FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Image,
-        ImageAspectFlags, ImageLayout, ImageSubresourceRange, ImageUsageFlags, ImageView,
-        ImageViewCreateInfo, ImageViewType, PhysicalDevice, PhysicalDeviceFeatures, Pipeline,
-        PipelineBindPoint, PipelineCache, PipelineColorBlendAttachmentState,
-        PipelineColorBlendStateCreateInfo, PipelineInputAssemblyStateCreateInfo, PipelineLayout,
-        PipelineLayoutCreateInfo, PipelineMultisampleStateCreateInfo,
-        PipelineRasterizationStateCreateInfo, PipelineShaderStageCreateInfo, PipelineStageFlags,
-        PipelineVertexInputStateCreateInfo, PipelineViewportStateCreateInfo, PolygonMode,
-        PresentInfoKHR, PresentModeKHR, PrimitiveTopology, Queue, QueueFlags, Rect2D, RenderPass,
-        RenderPassBeginInfo, RenderPassCreateInfo, SampleCountFlags, Semaphore,
-        SemaphoreCreateInfo, ShaderModule, ShaderModuleCreateInfo, ShaderStageFlags, SharingMode,
-        SubmitInfo, SubpassContents, SubpassDependency, SubpassDescription, SurfaceCapabilitiesKHR,
-        SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR, Viewport,
-        KHR_SWAPCHAIN_NAME, SUBPASS_EXTERNAL,
+        DebugUtilsMessengerEXT, DeviceCreateInfo, DeviceQueueCreateInfo, Extent2D, Fence,
+        FenceCreateFlags, FenceCreateInfo, Format, Framebuffer, FramebufferCreateInfo, FrontFace,
+        GraphicsPipelineCreateInfo, Image, ImageAspectFlags, ImageLayout, ImageSubresourceRange,
+        ImageUsageFlags, ImageView, ImageViewCreateInfo, ImageViewType, PhysicalDevice,
+        PhysicalDeviceFeatures, Pipeline, PipelineBindPoint, PipelineCache,
+        PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
+        PipelineInputAssemblyStateCreateInfo, PipelineLayout, PipelineLayoutCreateInfo,
+        PipelineMultisampleStateCreateInfo, PipelineRasterizationStateCreateInfo,
+        PipelineShaderStageCreateInfo, PipelineStageFlags, PipelineVertexInputStateCreateInfo,
+        PipelineViewportStateCreateInfo, PolygonMode, PresentInfoKHR, PresentModeKHR,
+        PrimitiveTopology, Queue, QueueFlags, Rect2D, RenderPass, RenderPassBeginInfo,
+        RenderPassCreateInfo, SampleCountFlags, Semaphore, SemaphoreCreateInfo, ShaderModule,
+        ShaderModuleCreateInfo, ShaderStageFlags, SharingMode, SubmitInfo, SubpassContents,
+        SubpassDependency, SubpassDescription, SurfaceCapabilitiesKHR, SurfaceFormatKHR,
+        SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR, Viewport, KHR_SWAPCHAIN_NAME,
+        SUBPASS_EXTERNAL,
     },
     Device, Entry,
 };
-use rusty_games::{init_logging, vulkan_debug_utils_callback, Instance};
+use rusty_games::{get_debug_messenger_create_info, init_logging, Instance};
 use tracing::{info, trace};
 use winit::{
     dpi::PhysicalSize,
@@ -900,29 +899,11 @@ impl App {
         Ok(true)
     }
 
-    /// Configures the DebugUtils extension for which message types and severity levels to
-    /// log.
-    fn get_debug_messenger_create_info<'a>() -> DebugUtilsMessengerCreateInfoEXT<'a> {
-        DebugUtilsMessengerCreateInfoEXT::default()
-            .message_severity(
-                DebugUtilsMessageSeverityFlagsEXT::VERBOSE
-                    | DebugUtilsMessageSeverityFlagsEXT::INFO
-                    | DebugUtilsMessageSeverityFlagsEXT::WARNING
-                    | DebugUtilsMessageSeverityFlagsEXT::ERROR,
-            )
-            .message_type(
-                DebugUtilsMessageTypeFlagsEXT::GENERAL
-                    | DebugUtilsMessageTypeFlagsEXT::PERFORMANCE
-                    | DebugUtilsMessageTypeFlagsEXT::VALIDATION,
-            )
-            .pfn_user_callback(Some(vulkan_debug_utils_callback))
-    }
-
     /// If validations are enabled, creates and registers the DebugUtils extension which prints
     /// logs to the console.
     fn setup_debug_messenger(entry: &Entry, instance: &Instance) -> Result<Option<DebugUtilsExt>> {
         if ENABLE_VALIDATIONS {
-            let debug_utils_messenger_create_info = Self::get_debug_messenger_create_info();
+            let debug_utils_messenger_create_info = get_debug_messenger_create_info();
             let debug_utils = debug_utils::Instance::new(entry, instance);
             let extension = unsafe {
                 debug_utils
