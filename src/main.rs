@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     ffi::{CStr, CString},
+    rc::Rc,
 };
 
 use anyhow::{anyhow, ensure, Result};
@@ -32,7 +33,7 @@ use ash::{
     },
     Device, Entry,
 };
-use rusty_games::{get_debug_messenger_create_info, init_logging, Instance};
+use rusty_games::{get_debug_messenger_create_info, init_logging, Instance, Surface};
 use tracing::{info, trace};
 use winit::{
     dpi::PhysicalSize,
@@ -71,13 +72,13 @@ struct App {
     /// The debug utils extension, if enabled
     debug_utils: Option<DebugUtilsExt>,
     /// The instance for interacting with Vulkan core
-    _instance: Instance,
+    _instance: Rc<Instance>,
     /// The actual window presented to the user
     /// Need to keep a reference to this for the life
     /// off the app or it will get cleaned up
     window: Window,
     /// See surface manager struct docs
-    surface_manager: SurfaceManager,
+    _surface: Surface,
     /// The linkage to the DLL for vulkan
     _entry: Entry,
     /// See swapchain manager struct docs
@@ -120,16 +121,16 @@ impl App {
 
         // init vulkan
         let entry = Entry::linked();
-        let instance = Instance::new(&entry, required_extensions)?;
+        let instance = Rc::new(Instance::new(&entry, required_extensions)?);
         let debug_utils = Self::setup_debug_messenger(&entry, &instance)?;
-        let surface_manager = Self::create_surface_manager(&entry, &instance, &window)?;
-        let physical_device = Self::pick_physical_device(&instance, &surface_manager)?;
+        let surface = Surface::new(&entry, &instance, &window)?;
+        let physical_device = Self::pick_physical_device(&instance, &surface)?;
         let (logical_device, queue_handles) =
-            Self::create_logical_device(&instance, &physical_device, &surface_manager)?;
+            Self::create_logical_device(&instance, &physical_device, &surface)?;
         let swapchain_manager = Self::create_swap_chain(
             &instance,
             &physical_device,
-            &surface_manager,
+            &surface,
             &window,
             &logical_device,
         )?;
@@ -162,12 +163,8 @@ impl App {
         )?;
 
         // configure command buffers
-        let command_pool = Self::create_command_pool(
-            &logical_device,
-            &instance,
-            &physical_device,
-            &surface_manager,
-        )?;
+        let command_pool =
+            Self::create_command_pool(&logical_device, &instance, &physical_device, &surface)?;
         let command_buffer = Self::create_command_buffer(&logical_device, &command_pool)?;
         let (image_available_semaphore, render_finished_semaphore, in_flight_fence) =
             Self::create_sync_object(&&logical_device)?;
@@ -179,7 +176,7 @@ impl App {
             queues: queue_handles,
             _instance: instance,
             window,
-            surface_manager,
+            _surface: surface,
             swapchain_manager,
             _images: images,
             image_views,
@@ -357,10 +354,9 @@ impl App {
         logical_device: &Device,
         instance: &Instance,
         physical_device: &PhysicalDevice,
-        surface_manager: &SurfaceManager,
+        surface: &Surface,
     ) -> Result<CommandPool> {
-        let queue_family_indicies =
-            Self::find_queue_families(instance, physical_device, surface_manager);
+        let queue_family_indicies = Self::find_queue_families(instance, physical_device, surface);
 
         let create_command_pool = CommandPoolCreateInfo::default()
             .flags(CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
@@ -650,24 +646,24 @@ impl App {
     fn create_swap_chain(
         instance: &Instance,
         physical_device: &PhysicalDevice,
-        surface_manager: &SurfaceManager,
+        surface: &Surface,
         window: &Window,
         logical_device: &Device,
     ) -> Result<SwapChainManager> {
-        let queue_indicies = Self::find_queue_families(instance, physical_device, surface_manager);
+        let queue_indicies = Self::find_queue_families(instance, physical_device, surface);
         let queue_family_indicies = Vec::from_iter(HashSet::from([
             queue_indicies.graphics_family.unwrap() as u32,
             queue_indicies.present_family.unwrap() as u32,
         ]));
 
-        let swap_chain_support = Self::query_swap_chain_support(physical_device, surface_manager)?;
+        let swap_chain_support = Self::query_swap_chain_support(physical_device, surface)?;
         let surface_format = swap_chain_support.choose_swap_surface_format();
         let present_mode = swap_chain_support.choose_swap_present_mode();
         let extent = swap_chain_support.choose_swap_extent(window);
         let image_count = swap_chain_support.get_image_count();
 
         let mut swap_chain_creation_info = SwapchainCreateInfoKHR::default()
-            .surface(surface_manager.surface.unwrap())
+            .surface(**surface)
             .min_image_count(image_count)
             .image_format(surface_format.format)
             .image_color_space(surface_format.color_space)
@@ -708,32 +704,11 @@ impl App {
     /// the physical device and surface
     fn query_swap_chain_support(
         physical_device: &PhysicalDevice,
-        surface_manager: &SurfaceManager,
+        surface: &Surface,
     ) -> Result<SwapChainSupportDetails> {
-        let capabilities = unsafe {
-            surface_manager
-                .surface_fn
-                .get_physical_device_surface_capabilities(
-                    *physical_device,
-                    surface_manager.surface.unwrap(),
-                )?
-        };
-        let formats = unsafe {
-            surface_manager
-                .surface_fn
-                .get_physical_device_surface_formats(
-                    *physical_device,
-                    surface_manager.surface.unwrap(),
-                )?
-        };
-        let present_modes = unsafe {
-            surface_manager
-                .surface_fn
-                .get_physical_device_surface_present_modes(
-                    *physical_device,
-                    surface_manager.surface.unwrap(),
-                )?
-        };
+        let capabilities = surface.get_physical_device_surface_capabilities(physical_device)?;
+        let formats = surface.get_physical_device_surface_formats(physical_device)?;
+        let present_modes = surface.get_physical_device_surface_present_modes(physical_device)?;
 
         Ok(SwapChainSupportDetails {
             capabilities,
@@ -762,7 +737,7 @@ impl App {
     fn create_logical_device(
         instance: &Instance,
         physical_device: &PhysicalDevice,
-        surface_manager: &SurfaceManager,
+        surface_manager: &Surface,
     ) -> Result<(Device, QueueHandles)> {
         let indicies = Self::find_queue_families(instance, physical_device, surface_manager);
         ensure!(indicies.is_complete());
@@ -813,7 +788,7 @@ impl App {
     fn find_queue_families(
         instance: &Instance,
         physical_device: &PhysicalDevice,
-        surface_manager: &SurfaceManager,
+        surface_manager: &Surface,
     ) -> QueueFamilyIndicies {
         let queue_family_properties =
             unsafe { instance.get_physical_device_queue_family_properties(*physical_device) };
@@ -825,12 +800,7 @@ impl App {
             present_family: queue_family_properties.iter().enumerate().position(
                 |(idx, _)| unsafe {
                     surface_manager
-                        .surface_fn
-                        .get_physical_device_surface_support(
-                            *physical_device,
-                            idx as u32,
-                            surface_manager.surface.unwrap(),
-                        )
+                        .get_physical_device_surface_support(physical_device, idx as u32)
                         .unwrap_or_default()
                 },
             ),
@@ -838,14 +808,11 @@ impl App {
     }
 
     /// Queries the system for the available physical devices, and picks the most appropriate one for use.
-    fn pick_physical_device(
-        instance: &Instance,
-        surface_manager: &SurfaceManager,
-    ) -> Result<PhysicalDevice> {
+    fn pick_physical_device(instance: &Instance, surface: &Surface) -> Result<PhysicalDevice> {
         let physical_devices = unsafe { instance.enumerate_physical_devices()? };
         let mut physical_device = None;
         for pd in physical_devices {
-            if Self::is_device_suitable(instance, &pd, surface_manager)? {
+            if Self::is_device_suitable(instance, &pd, surface)? {
                 physical_device = Some(pd);
                 break;
             }
@@ -859,16 +826,15 @@ impl App {
     fn is_device_suitable(
         instance: &Instance,
         physical_device: &PhysicalDevice,
-        surface_manager: &SurfaceManager,
+        surface: &Surface,
     ) -> Result<bool> {
-        let indicies = Self::find_queue_families(instance, physical_device, surface_manager);
+        let indicies = Self::find_queue_families(instance, physical_device, surface);
         let supports_extensions =
             Self::check_device_extensions_supported(instance, physical_device)?;
 
         let mut swap_chain_supported = false;
         if supports_extensions {
-            let swap_chain_support =
-                Self::query_swap_chain_support(physical_device, surface_manager)?;
+            let swap_chain_support = Self::query_swap_chain_support(physical_device, surface)?;
             swap_chain_supported = !swap_chain_support.formats.is_empty()
                 && !swap_chain_support.present_modes.is_empty();
         }
@@ -955,7 +921,6 @@ impl Drop for App {
         }
 
         self.swapchain_manager.destroy_swapchain();
-        self.surface_manager.destroy_surface();
 
         unsafe {
             self.device.destroy_device(None);

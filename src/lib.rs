@@ -1,4 +1,5 @@
 mod instance;
+mod surface;
 
 use anyhow::Result;
 use ash::vk::{
@@ -7,6 +8,7 @@ use ash::vk::{
 };
 pub use instance::Instance;
 use simple_logger::{set_up_color_terminal, SimpleLogger};
+pub use surface::Surface;
 use tracing::{event, Level};
 
 pub fn init_logging() -> Result<()> {
