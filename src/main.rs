@@ -7,7 +7,7 @@ use std::{
 use anyhow::{anyhow, ensure, Result};
 use ash::{
     ext::debug_utils,
-    khr::{surface, swapchain},
+    khr::swapchain,
     vk::{
         self, AccessFlags, AttachmentDescription, AttachmentLoadOp, AttachmentReference,
         AttachmentStoreOp, ClearColorValue, ClearValue, ColorComponentFlags, ColorSpaceKHR,
@@ -28,18 +28,17 @@ use ash::{
         RenderPassCreateInfo, SampleCountFlags, Semaphore, SemaphoreCreateInfo, ShaderModule,
         ShaderModuleCreateInfo, ShaderStageFlags, SharingMode, SubmitInfo, SubpassContents,
         SubpassDependency, SubpassDescription, SurfaceCapabilitiesKHR, SurfaceFormatKHR,
-        SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR, Viewport, KHR_SWAPCHAIN_NAME,
-        SUBPASS_EXTERNAL,
+        SwapchainCreateInfoKHR, SwapchainKHR, Viewport, KHR_SWAPCHAIN_NAME, SUBPASS_EXTERNAL,
     },
     Device, Entry,
 };
 use rusty_games::{get_debug_messenger_create_info, init_logging, Instance, Surface};
-use tracing::{info, trace};
+use tracing::info;
 use winit::{
     dpi::PhysicalSize,
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
-    raw_window_handle::{HasDisplayHandle, HasWindowHandle},
+    raw_window_handle::HasDisplayHandle,
     window::{Window, WindowBuilder, WindowButtons},
 };
 
@@ -717,21 +716,6 @@ impl App {
         })
     }
 
-    /// Creates a manager that can create and destroy surfaces to be rendered to
-    fn create_surface_manager(
-        entry: &Entry,
-        instance: &Instance,
-        window: &Window,
-    ) -> Result<SurfaceManager> {
-        let surface_fn = surface::Instance::new(entry, instance);
-        let mut surface_manager = SurfaceManager {
-            surface_fn,
-            surface: None,
-        };
-        surface_manager.create_surface(entry, instance, window)?;
-        Ok(surface_manager)
-    }
-
     /// Creates the logical device to interface with the selected physical device. Each queue family
     /// will create 1 queue instance for submitting commands to.
     fn create_logical_device(
@@ -797,13 +781,14 @@ impl App {
             graphics_family: queue_family_properties
                 .iter()
                 .position(|qfp| qfp.queue_flags.contains(QueueFlags::GRAPHICS)),
-            present_family: queue_family_properties.iter().enumerate().position(
-                |(idx, _)| unsafe {
+            present_family: queue_family_properties
+                .iter()
+                .enumerate()
+                .position(|(idx, _)| {
                     surface_manager
                         .get_physical_device_surface_support(physical_device, idx as u32)
                         .unwrap_or_default()
-                },
-            ),
+                }),
         }
     }
 
@@ -959,46 +944,6 @@ impl QueueFamilyIndicies {
 struct QueueHandles {
     graphics: Queue,
     present: Queue,
-}
-
-/// Struct for creating and managing surfaces
-struct SurfaceManager {
-    surface_fn: surface::Instance,
-    surface: Option<SurfaceKHR>,
-}
-
-impl SurfaceManager {
-    pub fn create_surface(
-        &mut self,
-        entry: &Entry,
-        instance: &Instance,
-        window: &Window,
-    ) -> Result<()> {
-        ensure!(
-            self.surface.is_none(),
-            "Cannot create a new surface, one already exists!"
-        );
-        let surface = unsafe {
-            ash_window::create_surface(
-                entry,
-                instance,
-                window.display_handle()?.as_raw(),
-                window.window_handle()?.as_raw(),
-                None,
-            )?
-        };
-        trace!("Surface created");
-        self.surface = Some(surface);
-        Ok(())
-    }
-
-    pub fn destroy_surface(&mut self) {
-        if let Some(surface) = self.surface.take() {
-            unsafe { self.surface_fn.destroy_surface(surface, None) };
-            trace!("Surface destroyed");
-            self.surface = None;
-        }
-    }
 }
 
 /// Details about what features the swap chain supports
