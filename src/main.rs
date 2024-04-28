@@ -70,8 +70,6 @@ struct App {
     device: Device,
     /// The debug utils extension, if enabled
     debug_utils: Option<DebugUtilsExt>,
-    /// The instance for interacting with Vulkan core
-    _instance: Rc<Instance>,
     /// The actual window presented to the user
     /// Need to keep a reference to this for the life
     /// off the app or it will get cleaned up
@@ -173,7 +171,6 @@ impl App {
             debug_utils,
             device: logical_device,
             queues: queue_handles,
-            _instance: instance,
             window,
             _surface: surface,
             swapchain_manager,
