@@ -13,7 +13,7 @@ use crate::{Instance, Surface, REQUIRED_DEVICE_EXTENSIONS};
 /// presentation surface. There should be one per surface to display
 /// results on, and per physical device.
 pub struct PhysicalDeviceSurface {
-    instance: Rc<Instance>,
+    pub(crate) instance: Rc<Instance>,
     surface: Rc<Surface>,
     physical_device: PhysicalDevice,
     queue_families: QueueFamilyIndicies,
@@ -35,21 +35,6 @@ impl PhysicalDeviceSurface {
             queue_families,
             swapchain_support_details,
         })
-    }
-
-    pub fn get_surface_capabilities(&self) -> Result<SurfaceCapabilitiesKHR> {
-        self.surface
-            .get_physical_device_surface_capabilities(&self.physical_device)
-    }
-
-    pub fn get_surface_formats(&self) -> Result<Vec<SurfaceFormatKHR>> {
-        self.surface
-            .get_physical_device_surface_formats(&self.physical_device)
-    }
-
-    pub fn get_surface_present_modes(&self) -> Result<Vec<PresentModeKHR>> {
-        self.surface
-            .get_physical_device_surface_present_modes(&self.physical_device)
     }
 
     pub fn is_suitable(&self) -> Result<bool> {

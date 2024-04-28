@@ -10,25 +10,25 @@ use ash::{
         CommandBufferAllocateInfo, CommandBufferBeginInfo, CommandBufferLevel,
         CommandBufferResetFlags, CommandPool, CommandPoolCreateFlags, CommandPoolCreateInfo,
         ComponentMapping, ComponentSwizzle, CompositeAlphaFlagsKHR, CullModeFlags,
-        DebugUtilsMessengerEXT, DeviceCreateInfo, DeviceQueueCreateInfo, Fence, FenceCreateFlags,
-        FenceCreateInfo, Framebuffer, FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo,
-        Image, ImageAspectFlags, ImageLayout, ImageSubresourceRange, ImageUsageFlags, ImageView,
-        ImageViewCreateInfo, ImageViewType, PhysicalDeviceFeatures, Pipeline, PipelineBindPoint,
-        PipelineCache, PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
+        DebugUtilsMessengerEXT, Fence, FenceCreateFlags, FenceCreateInfo, Framebuffer,
+        FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Image, ImageAspectFlags,
+        ImageLayout, ImageSubresourceRange, ImageUsageFlags, ImageView, ImageViewCreateInfo,
+        ImageViewType, Pipeline, PipelineBindPoint, PipelineCache,
+        PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
         PipelineInputAssemblyStateCreateInfo, PipelineLayout, PipelineLayoutCreateInfo,
         PipelineMultisampleStateCreateInfo, PipelineRasterizationStateCreateInfo,
         PipelineShaderStageCreateInfo, PipelineStageFlags, PipelineVertexInputStateCreateInfo,
-        PipelineViewportStateCreateInfo, PolygonMode, PresentInfoKHR, PrimitiveTopology, Queue,
-        Rect2D, RenderPass, RenderPassBeginInfo, RenderPassCreateInfo, SampleCountFlags, Semaphore,
+        PipelineViewportStateCreateInfo, PolygonMode, PresentInfoKHR, PrimitiveTopology, Rect2D,
+        RenderPass, RenderPassBeginInfo, RenderPassCreateInfo, SampleCountFlags, Semaphore,
         SemaphoreCreateInfo, ShaderModule, ShaderModuleCreateInfo, ShaderStageFlags, SharingMode,
         SubmitInfo, SubpassContents, SubpassDependency, SubpassDescription, SwapchainCreateInfoKHR,
-        SwapchainKHR, Viewport, KHR_SWAPCHAIN_NAME, SUBPASS_EXTERNAL,
+        SwapchainKHR, Viewport, SUBPASS_EXTERNAL,
     },
     Device, Entry,
 };
 use rusty_games::{
-    get_debug_messenger_create_info, init_logging, Instance, PhysicalDeviceSurface, Surface,
-    SwapChainSupportDetails,
+    get_debug_messenger_create_info, init_logging, Instance, LogicalDevice, PhysicalDeviceSurface,
+    Surface, SwapChainSupportDetails,
 };
 use tracing::info;
 use winit::{
@@ -39,7 +39,6 @@ use winit::{
     window::{Window, WindowBuilder, WindowButtons},
 };
 
-const REQUIRED_DEVICE_EXTENSIONS: &[&CStr] = &[KHR_SWAPCHAIN_NAME];
 const WINDOW_WIDTH: u32 = 800;
 const WINDOW_HEIGHT: u32 = 600;
 const WINDOW_TITLE: &str = "Hello, Triangle";
@@ -60,18 +59,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 struct App {
-    /// Handles to the queues for submitting instructions to
-    queues: QueueHandles,
     /// The logical device for interfacing with the
     /// physical hardware
-    device: Device,
+    device: LogicalDevice,
     /// The debug utils extension, if enabled
     debug_utils: Option<DebugUtilsExt>,
     /// The actual window presented to the user
     /// Need to keep a reference to this for the life
     /// off the app or it will get cleaned up
     window: Window,
-    _pds: PhysicalDeviceSurface,
     /// The linkage to the DLL for vulkan
     _entry: Entry,
     /// See swapchain manager struct docs
@@ -118,16 +114,10 @@ impl App {
         let debug_utils = Self::setup_debug_messenger(&entry, &instance)?;
         let surface = Surface::new(&entry, &instance, &window)?;
         let physical_device_surface = Self::pick_physical_device(&instance, &Rc::new(surface))?;
+        let logical_device: LogicalDevice = physical_device_surface.try_into()?;
 
         // TODO: move these
-        let (logical_device, queue_handles) =
-            Self::create_logical_device(&instance, &physical_device_surface)?;
-        let swapchain_manager = Self::create_swap_chain(
-            &instance,
-            &physical_device_surface,
-            &window,
-            &logical_device,
-        )?;
+        let swapchain_manager = Self::create_swap_chain(&instance, &window, &logical_device)?;
         let images = swapchain_manager.get_swapchain_images()?;
         let image_views = Self::create_image_views(&logical_device, &swapchain_manager, &images)?;
 
@@ -157,7 +147,7 @@ impl App {
         )?;
 
         // configure command buffers
-        let command_pool = Self::create_command_pool(&logical_device, &physical_device_surface)?;
+        let command_pool = Self::create_command_pool(&logical_device)?;
         let command_buffer = Self::create_command_buffer(&logical_device, &command_pool)?;
         let (image_available_semaphore, render_finished_semaphore, in_flight_fence) =
             Self::create_sync_object(&&logical_device)?;
@@ -166,9 +156,7 @@ impl App {
             _entry: entry,
             debug_utils,
             device: logical_device,
-            queues: queue_handles,
             window,
-            _pds: physical_device_surface,
             swapchain_manager,
             _images: images,
             image_views,
@@ -235,8 +223,11 @@ impl App {
             .command_buffers(&command_buffers)
             .signal_semaphores(&signal_semaphores)];
         unsafe {
-            self.device
-                .queue_submit(self.queues.graphics, &submit_info, self.in_flight_fence)?
+            self.device.queue_submit(
+                self.device.get_queues().graphics,
+                &submit_info,
+                self.in_flight_fence,
+            )?
         }
 
         let swapchains = [self.swapchain_manager.swapchain];
@@ -248,7 +239,7 @@ impl App {
         unsafe {
             self.swapchain_manager
                 .device
-                .queue_present(self.queues.present, &present_info)?
+                .queue_present(self.device.get_queues().present, &present_info)?
         };
 
         Ok(())
@@ -342,11 +333,8 @@ impl App {
     }
 
     /// Creates a command pool for getting the command buffers from
-    fn create_command_pool(
-        logical_device: &Device,
-        physical_device_surface: &PhysicalDeviceSurface,
-    ) -> Result<CommandPool> {
-        let queue_family_indicies = physical_device_surface.get_queue_family_indicies();
+    fn create_command_pool(logical_device: &LogicalDevice) -> Result<CommandPool> {
+        let queue_family_indicies = logical_device.get_queue_family_indicies();
 
         let create_command_pool = CommandPoolCreateInfo::default()
             .flags(CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
@@ -635,24 +623,23 @@ impl App {
     /// Creates the swap chain used to present render images to the screen
     fn create_swap_chain(
         instance: &Instance,
-        physical_device_surface: &PhysicalDeviceSurface,
         window: &Window,
-        logical_device: &Device,
+        logical_device: &LogicalDevice,
     ) -> Result<SwapChainManager> {
-        let queue_indicies = physical_device_surface.get_queue_family_indicies();
+        let queue_indicies = logical_device.get_queue_family_indicies();
         let queue_family_indicies = Vec::from_iter(HashSet::from([
             queue_indicies.graphics_family.unwrap() as u32,
             queue_indicies.present_family.unwrap() as u32,
         ]));
 
-        let swap_chain_support = physical_device_surface.get_swapchain_support_details();
+        let swap_chain_support = logical_device.get_swapchain_support_details();
         let surface_format = swap_chain_support.choose_swap_surface_format();
         let present_mode = swap_chain_support.choose_swap_present_mode();
         let extent = swap_chain_support.choose_swap_extent(window);
         let image_count = swap_chain_support.get_image_count();
 
         let mut swap_chain_creation_info = SwapchainCreateInfoKHR::default()
-            .surface(***physical_device_surface.get_surface())
+            .surface(***logical_device.get_surface())
             .min_image_count(image_count)
             .image_format(surface_format.format)
             .image_color_space(surface_format.color_space)
@@ -687,62 +674,6 @@ impl App {
             support_details: swap_chain_support.clone(),
             swapchain,
         })
-    }
-
-    /// Creates the logical device to interface with the selected physical device. Each queue family
-    /// will create 1 queue instance for submitting commands to.
-    fn create_logical_device(
-        instance: &Instance,
-        physical_device_surface: &PhysicalDeviceSurface,
-    ) -> Result<(Device, QueueHandles)> {
-        let indicies = physical_device_surface.get_queue_family_indicies();
-        ensure!(indicies.is_complete());
-
-        let unique_queue_family_indicies = HashSet::from([
-            indicies.graphics_family.unwrap() as u32,
-            indicies.present_family.unwrap() as u32,
-        ]);
-
-        let queue_priorities = [1.0f32];
-        let device_queue_creation_infos = unique_queue_family_indicies
-            .into_iter()
-            .map(|queue_family_index| {
-                DeviceQueueCreateInfo::default()
-                    .queue_family_index(queue_family_index)
-                    .queue_priorities(&queue_priorities)
-            })
-            .collect::<Vec<_>>();
-
-        let physical_device_features = PhysicalDeviceFeatures::default();
-
-        let extension_names = REQUIRED_DEVICE_EXTENSIONS
-            .iter()
-            .map(|extension_name| (**extension_name).as_ptr())
-            .collect::<Vec<_>>();
-
-        let device_create_info = DeviceCreateInfo::default()
-            .queue_create_infos(&device_queue_creation_infos)
-            .enabled_features(&physical_device_features)
-            .enabled_extension_names(&extension_names);
-
-        let logical_device = unsafe {
-            instance.create_device(
-                physical_device_surface.get_physical_device(),
-                &device_create_info,
-                None,
-            )
-        }?;
-
-        let graphics_queue_handle =
-            unsafe { logical_device.get_device_queue(indicies.graphics_family.unwrap() as u32, 0) };
-        let present_queue_handle =
-            unsafe { logical_device.get_device_queue(indicies.present_family.unwrap() as u32, 0) };
-        let queue_handles = QueueHandles {
-            graphics: graphics_queue_handle,
-            present: present_queue_handle,
-        };
-
-        Ok((logical_device, queue_handles))
     }
 
     /// Queries the system for the available physical devices, and picks the most appropriate one for use.
@@ -816,10 +747,6 @@ impl Drop for App {
         }
 
         self.swapchain_manager.destroy_swapchain();
-
-        unsafe {
-            self.device.destroy_device(None);
-        }
     }
 }
 
@@ -829,13 +756,6 @@ impl Drop for App {
 struct DebugUtilsExt {
     debug_utils: debug_utils::Instance,
     extension: DebugUtilsMessengerEXT,
-}
-
-/// Holds handles to the queues created as part of the logical
-/// device initialization.
-struct QueueHandles {
-    graphics: Queue,
-    present: Queue,
 }
 
 /// Struct for holding references to swapchain

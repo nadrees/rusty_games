@@ -1,4 +1,5 @@
 mod instance;
+mod logical_device;
 mod physical_device_surface;
 mod surface;
 
@@ -10,6 +11,7 @@ use ash::vk::{
     DebugUtilsMessengerCallbackDataEXT, DebugUtilsMessengerCreateInfoEXT, KHR_SWAPCHAIN_NAME,
 };
 pub use instance::Instance;
+pub use logical_device::LogicalDevice;
 pub use physical_device_surface::{PhysicalDeviceSurface, SwapChainSupportDetails};
 use simple_logger::{set_up_color_terminal, SimpleLogger};
 pub use surface::Surface;
