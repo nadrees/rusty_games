@@ -1,15 +1,21 @@
 mod instance;
+mod physical_device_surface;
 mod surface;
+
+use std::ffi::CStr;
 
 use anyhow::Result;
 use ash::vk::{
     Bool32, DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
-    DebugUtilsMessengerCallbackDataEXT, DebugUtilsMessengerCreateInfoEXT,
+    DebugUtilsMessengerCallbackDataEXT, DebugUtilsMessengerCreateInfoEXT, KHR_SWAPCHAIN_NAME,
 };
 pub use instance::Instance;
+pub use physical_device_surface::{PhysicalDeviceSurface, SwapChainSupportDetails};
 use simple_logger::{set_up_color_terminal, SimpleLogger};
 pub use surface::Surface;
 use tracing::{event, Level};
+
+const REQUIRED_DEVICE_EXTENSIONS: &[&CStr] = &[KHR_SWAPCHAIN_NAME];
 
 pub fn init_logging() -> Result<()> {
     set_up_color_terminal();

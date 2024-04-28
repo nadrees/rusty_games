@@ -1,8 +1,4 @@
-use std::{
-    collections::HashSet,
-    ffi::{CStr, CString},
-    rc::Rc,
-};
+use std::{collections::HashSet, ffi::CStr, rc::Rc};
 
 use anyhow::{anyhow, ensure, Result};
 use ash::{
@@ -10,29 +6,30 @@ use ash::{
     khr::swapchain,
     vk::{
         self, AccessFlags, AttachmentDescription, AttachmentLoadOp, AttachmentReference,
-        AttachmentStoreOp, ClearColorValue, ClearValue, ColorComponentFlags, ColorSpaceKHR,
-        CommandBuffer, CommandBufferAllocateInfo, CommandBufferBeginInfo, CommandBufferLevel,
+        AttachmentStoreOp, ClearColorValue, ClearValue, ColorComponentFlags, CommandBuffer,
+        CommandBufferAllocateInfo, CommandBufferBeginInfo, CommandBufferLevel,
         CommandBufferResetFlags, CommandPool, CommandPoolCreateFlags, CommandPoolCreateInfo,
         ComponentMapping, ComponentSwizzle, CompositeAlphaFlagsKHR, CullModeFlags,
-        DebugUtilsMessengerEXT, DeviceCreateInfo, DeviceQueueCreateInfo, Extent2D, Fence,
-        FenceCreateFlags, FenceCreateInfo, Format, Framebuffer, FramebufferCreateInfo, FrontFace,
-        GraphicsPipelineCreateInfo, Image, ImageAspectFlags, ImageLayout, ImageSubresourceRange,
-        ImageUsageFlags, ImageView, ImageViewCreateInfo, ImageViewType, PhysicalDevice,
-        PhysicalDeviceFeatures, Pipeline, PipelineBindPoint, PipelineCache,
-        PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
+        DebugUtilsMessengerEXT, DeviceCreateInfo, DeviceQueueCreateInfo, Fence, FenceCreateFlags,
+        FenceCreateInfo, Framebuffer, FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo,
+        Image, ImageAspectFlags, ImageLayout, ImageSubresourceRange, ImageUsageFlags, ImageView,
+        ImageViewCreateInfo, ImageViewType, PhysicalDeviceFeatures, Pipeline, PipelineBindPoint,
+        PipelineCache, PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
         PipelineInputAssemblyStateCreateInfo, PipelineLayout, PipelineLayoutCreateInfo,
         PipelineMultisampleStateCreateInfo, PipelineRasterizationStateCreateInfo,
         PipelineShaderStageCreateInfo, PipelineStageFlags, PipelineVertexInputStateCreateInfo,
-        PipelineViewportStateCreateInfo, PolygonMode, PresentInfoKHR, PresentModeKHR,
-        PrimitiveTopology, Queue, QueueFlags, Rect2D, RenderPass, RenderPassBeginInfo,
-        RenderPassCreateInfo, SampleCountFlags, Semaphore, SemaphoreCreateInfo, ShaderModule,
-        ShaderModuleCreateInfo, ShaderStageFlags, SharingMode, SubmitInfo, SubpassContents,
-        SubpassDependency, SubpassDescription, SurfaceCapabilitiesKHR, SurfaceFormatKHR,
-        SwapchainCreateInfoKHR, SwapchainKHR, Viewport, KHR_SWAPCHAIN_NAME, SUBPASS_EXTERNAL,
+        PipelineViewportStateCreateInfo, PolygonMode, PresentInfoKHR, PrimitiveTopology, Queue,
+        Rect2D, RenderPass, RenderPassBeginInfo, RenderPassCreateInfo, SampleCountFlags, Semaphore,
+        SemaphoreCreateInfo, ShaderModule, ShaderModuleCreateInfo, ShaderStageFlags, SharingMode,
+        SubmitInfo, SubpassContents, SubpassDependency, SubpassDescription, SwapchainCreateInfoKHR,
+        SwapchainKHR, Viewport, KHR_SWAPCHAIN_NAME, SUBPASS_EXTERNAL,
     },
     Device, Entry,
 };
-use rusty_games::{get_debug_messenger_create_info, init_logging, Instance, Surface};
+use rusty_games::{
+    get_debug_messenger_create_info, init_logging, Instance, PhysicalDeviceSurface, Surface,
+    SwapChainSupportDetails,
+};
 use tracing::info;
 use winit::{
     dpi::PhysicalSize,
@@ -74,8 +71,7 @@ struct App {
     /// Need to keep a reference to this for the life
     /// off the app or it will get cleaned up
     window: Window,
-    /// See surface manager struct docs
-    _surface: Surface,
+    _pds: PhysicalDeviceSurface,
     /// The linkage to the DLL for vulkan
     _entry: Entry,
     /// See swapchain manager struct docs
@@ -121,13 +117,14 @@ impl App {
         let instance = Rc::new(Instance::new(&entry, required_extensions)?);
         let debug_utils = Self::setup_debug_messenger(&entry, &instance)?;
         let surface = Surface::new(&entry, &instance, &window)?;
-        let physical_device = Self::pick_physical_device(&instance, &surface)?;
+        let physical_device_surface = Self::pick_physical_device(&instance, &Rc::new(surface))?;
+
+        // TODO: move these
         let (logical_device, queue_handles) =
-            Self::create_logical_device(&instance, &physical_device, &surface)?;
+            Self::create_logical_device(&instance, &physical_device_surface)?;
         let swapchain_manager = Self::create_swap_chain(
             &instance,
-            &physical_device,
-            &surface,
+            &physical_device_surface,
             &window,
             &logical_device,
         )?;
@@ -160,8 +157,7 @@ impl App {
         )?;
 
         // configure command buffers
-        let command_pool =
-            Self::create_command_pool(&logical_device, &instance, &physical_device, &surface)?;
+        let command_pool = Self::create_command_pool(&logical_device, &physical_device_surface)?;
         let command_buffer = Self::create_command_buffer(&logical_device, &command_pool)?;
         let (image_available_semaphore, render_finished_semaphore, in_flight_fence) =
             Self::create_sync_object(&&logical_device)?;
@@ -172,7 +168,7 @@ impl App {
             device: logical_device,
             queues: queue_handles,
             window,
-            _surface: surface,
+            _pds: physical_device_surface,
             swapchain_manager,
             _images: images,
             image_views,
@@ -348,11 +344,9 @@ impl App {
     /// Creates a command pool for getting the command buffers from
     fn create_command_pool(
         logical_device: &Device,
-        instance: &Instance,
-        physical_device: &PhysicalDevice,
-        surface: &Surface,
+        physical_device_surface: &PhysicalDeviceSurface,
     ) -> Result<CommandPool> {
-        let queue_family_indicies = Self::find_queue_families(instance, physical_device, surface);
+        let queue_family_indicies = physical_device_surface.get_queue_family_indicies();
 
         let create_command_pool = CommandPoolCreateInfo::default()
             .flags(CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
@@ -641,25 +635,24 @@ impl App {
     /// Creates the swap chain used to present render images to the screen
     fn create_swap_chain(
         instance: &Instance,
-        physical_device: &PhysicalDevice,
-        surface: &Surface,
+        physical_device_surface: &PhysicalDeviceSurface,
         window: &Window,
         logical_device: &Device,
     ) -> Result<SwapChainManager> {
-        let queue_indicies = Self::find_queue_families(instance, physical_device, surface);
+        let queue_indicies = physical_device_surface.get_queue_family_indicies();
         let queue_family_indicies = Vec::from_iter(HashSet::from([
             queue_indicies.graphics_family.unwrap() as u32,
             queue_indicies.present_family.unwrap() as u32,
         ]));
 
-        let swap_chain_support = Self::query_swap_chain_support(physical_device, surface)?;
+        let swap_chain_support = physical_device_surface.get_swapchain_support_details();
         let surface_format = swap_chain_support.choose_swap_surface_format();
         let present_mode = swap_chain_support.choose_swap_present_mode();
         let extent = swap_chain_support.choose_swap_extent(window);
         let image_count = swap_chain_support.get_image_count();
 
         let mut swap_chain_creation_info = SwapchainCreateInfoKHR::default()
-            .surface(**surface)
+            .surface(***physical_device_surface.get_surface())
             .min_image_count(image_count)
             .image_format(surface_format.format)
             .image_color_space(surface_format.color_space)
@@ -691,25 +684,8 @@ impl App {
 
         Ok(SwapChainManager {
             device: swapchain_device,
-            support_details: swap_chain_support,
+            support_details: swap_chain_support.clone(),
             swapchain,
-        })
-    }
-
-    /// Queries for the details of what the swap chain supports given
-    /// the physical device and surface
-    fn query_swap_chain_support(
-        physical_device: &PhysicalDevice,
-        surface: &Surface,
-    ) -> Result<SwapChainSupportDetails> {
-        let capabilities = surface.get_physical_device_surface_capabilities(physical_device)?;
-        let formats = surface.get_physical_device_surface_formats(physical_device)?;
-        let present_modes = surface.get_physical_device_surface_present_modes(physical_device)?;
-
-        Ok(SwapChainSupportDetails {
-            capabilities,
-            formats,
-            present_modes,
         })
     }
 
@@ -717,10 +693,9 @@ impl App {
     /// will create 1 queue instance for submitting commands to.
     fn create_logical_device(
         instance: &Instance,
-        physical_device: &PhysicalDevice,
-        surface_manager: &Surface,
+        physical_device_surface: &PhysicalDeviceSurface,
     ) -> Result<(Device, QueueHandles)> {
-        let indicies = Self::find_queue_families(instance, physical_device, surface_manager);
+        let indicies = physical_device_surface.get_queue_family_indicies();
         ensure!(indicies.is_complete());
 
         let unique_queue_family_indicies = HashSet::from([
@@ -750,8 +725,13 @@ impl App {
             .enabled_features(&physical_device_features)
             .enabled_extension_names(&extension_names);
 
-        let logical_device =
-            unsafe { instance.create_device(*physical_device, &device_create_info, None) }?;
+        let logical_device = unsafe {
+            instance.create_device(
+                physical_device_surface.get_physical_device(),
+                &device_create_info,
+                None,
+            )
+        }?;
 
         let graphics_queue_handle =
             unsafe { logical_device.get_device_queue(indicies.graphics_family.unwrap() as u32, 0) };
@@ -765,86 +745,19 @@ impl App {
         Ok((logical_device, queue_handles))
     }
 
-    /// Queries the Queue Families the physica device supports, and records the index of the relevant ones.
-    fn find_queue_families(
-        instance: &Instance,
-        physical_device: &PhysicalDevice,
-        surface_manager: &Surface,
-    ) -> QueueFamilyIndicies {
-        let queue_family_properties =
-            unsafe { instance.get_physical_device_queue_family_properties(*physical_device) };
-        QueueFamilyIndicies {
-            _physical_device: *physical_device,
-            graphics_family: queue_family_properties
-                .iter()
-                .position(|qfp| qfp.queue_flags.contains(QueueFlags::GRAPHICS)),
-            present_family: queue_family_properties
-                .iter()
-                .enumerate()
-                .position(|(idx, _)| {
-                    surface_manager
-                        .get_physical_device_surface_support(physical_device, idx as u32)
-                        .unwrap_or_default()
-                }),
-        }
-    }
-
     /// Queries the system for the available physical devices, and picks the most appropriate one for use.
-    fn pick_physical_device(instance: &Instance, surface: &Surface) -> Result<PhysicalDevice> {
+    fn pick_physical_device(
+        instance: &Rc<Instance>,
+        surface: &Rc<Surface>,
+    ) -> Result<PhysicalDeviceSurface> {
         let physical_devices = unsafe { instance.enumerate_physical_devices()? };
-        let mut physical_device = None;
         for pd in physical_devices {
-            if Self::is_device_suitable(instance, &pd, surface)? {
-                physical_device = Some(pd);
-                break;
+            let pds = PhysicalDeviceSurface::new(instance, surface, pd)?;
+            if pds.is_suitable()? {
+                return Ok(pds);
             }
         }
-        let physical_device =
-            physical_device.ok_or_else(|| anyhow!("Could not find a suitable physical device!"))?;
-        return Ok(physical_device);
-    }
-
-    /// Returns if the specified physical device is suitable for use for this application.
-    fn is_device_suitable(
-        instance: &Instance,
-        physical_device: &PhysicalDevice,
-        surface: &Surface,
-    ) -> Result<bool> {
-        let indicies = Self::find_queue_families(instance, physical_device, surface);
-        let supports_extensions =
-            Self::check_device_extensions_supported(instance, physical_device)?;
-
-        let mut swap_chain_supported = false;
-        if supports_extensions {
-            let swap_chain_support = Self::query_swap_chain_support(physical_device, surface)?;
-            swap_chain_supported = !swap_chain_support.formats.is_empty()
-                && !swap_chain_support.present_modes.is_empty();
-        }
-
-        Ok(indicies.is_complete() && supports_extensions && swap_chain_supported)
-    }
-
-    /// Checks to see if the physical device supports all required device extensions
-    fn check_device_extensions_supported(
-        instance: &Instance,
-        physical_device: &PhysicalDevice,
-    ) -> Result<bool> {
-        let device_extension_properties =
-            unsafe { instance.enumerate_device_extension_properties(*physical_device)? };
-
-        let mut device_extension_names = HashSet::new();
-        for device_extension in device_extension_properties {
-            let extension_name = device_extension.extension_name_as_c_str()?;
-            device_extension_names.insert(extension_name.to_owned());
-        }
-
-        for required_extension in REQUIRED_DEVICE_EXTENSIONS {
-            let required_extension_name: CString = (*required_extension).to_owned();
-            if !device_extension_names.contains(&required_extension_name) {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        Err(anyhow!("Could not find a suitable physical device!"))
     }
 
     /// If validations are enabled, creates and registers the DebugUtils extension which prints
@@ -918,114 +831,11 @@ struct DebugUtilsExt {
     extension: DebugUtilsMessengerEXT,
 }
 
-/// Holds the indexes of the relevant queue families for a given
-/// physical device. Created from find_queue_families call.
-struct QueueFamilyIndicies {
-    /// Which physical device these queue families belong to
-    _physical_device: PhysicalDevice,
-    /// The graphics queue family index, if one is available
-    graphics_family: Option<usize>,
-    present_family: Option<usize>,
-}
-
-impl QueueFamilyIndicies {
-    /// True if all queue families are available for this physical
-    /// device.
-    pub fn is_complete(&self) -> bool {
-        self.graphics_family.is_some() && self.present_family.is_some()
-    }
-}
-
 /// Holds handles to the queues created as part of the logical
 /// device initialization.
 struct QueueHandles {
     graphics: Queue,
     present: Queue,
-}
-
-/// Details about what features the swap chain supports
-/// for a given surface
-struct SwapChainSupportDetails {
-    capabilities: SurfaceCapabilitiesKHR,
-    /// The formats (color depth settings) available to use.
-    formats: Vec<SurfaceFormatKHR>,
-    present_modes: Vec<PresentModeKHR>,
-}
-
-impl SwapChainSupportDetails {
-    /// Picks the preferential surface format to use from the available
-    pub fn choose_swap_surface_format(&self) -> &SurfaceFormatKHR {
-        let srgb_color_space_formats = self
-            .formats
-            .iter()
-            .filter(|format| format.color_space == ColorSpaceKHR::SRGB_NONLINEAR)
-            .collect::<Vec<_>>();
-        if let Some(b8g8r8a8_format) = srgb_color_space_formats
-            .iter()
-            .find(|format| format.format == Format::B8G8R8A8_SRGB)
-        {
-            return *b8g8r8a8_format;
-        } else if let Some(srbg_format) = srgb_color_space_formats.first() {
-            return *srbg_format;
-        } else {
-            return self.formats.first().unwrap();
-        }
-    }
-
-    /// Picks the preferential swap mode to use based on the available
-    pub fn choose_swap_present_mode(&self) -> PresentModeKHR {
-        // prefer mailbox, where if we can render faster than the screen can present
-        // and the queue fills up, we'll replace the last image with the most up to
-        // date version
-        if self.present_modes.contains(&PresentModeKHR::MAILBOX) {
-            return PresentModeKHR::MAILBOX;
-        }
-        // otherwise, use FIFO - basically vertical sync. This is the only setting
-        // guaranteed to be available on all systems
-        return PresentModeKHR::FIFO;
-    }
-
-    /// Returns the "extent" of the images to draw - the resolution to use *in pixels*.
-    pub fn choose_swap_extent(&self, window: &Window) -> Extent2D {
-        match self.capabilities.current_extent.width {
-            // in this scenario, we're in a high DPI setting where extent is in screen
-            // space, but we need it to be in pixels. set it to the same size as the
-            // window
-            u32::MAX => {
-                let window_size = window.inner_size();
-                Extent2D {
-                    width: window_size.width.clamp(
-                        self.capabilities.min_image_extent.width,
-                        self.capabilities.max_image_extent.width,
-                    ),
-                    height: window_size.height.clamp(
-                        self.capabilities.min_image_extent.height,
-                        self.capabilities.max_image_extent.height,
-                    ),
-                }
-            }
-            _ => self.capabilities.current_extent,
-        }
-    }
-
-    /// Returns how many images the swap chain should use based on its support
-    pub fn get_image_count(&self) -> u32 {
-        let max_image_count = self.capabilities.max_image_count;
-        let min_image_count = self.capabilities.min_image_count;
-
-        let image_count = match max_image_count {
-            // zero means there is no max, so just use 1 more than the minimum
-            0 => min_image_count + 1,
-            // in this case, use a few more than the minimum so we're not
-            // stuck waiting on internal details
-            _ => {
-                let delta = (max_image_count - min_image_count) / 2;
-                min_image_count + delta
-            }
-        };
-
-        image_count.clamp(min_image_count, max_image_count)
-    }
 }
 
 /// Struct for holding references to swapchain

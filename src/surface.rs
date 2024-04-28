@@ -39,7 +39,7 @@ impl Surface {
         })
     }
 
-    pub fn get_physical_device_surface_capabilities(
+    pub(crate) fn get_physical_device_surface_capabilities(
         &self,
         physical_device: &PhysicalDevice,
     ) -> Result<SurfaceCapabilitiesKHR> {
@@ -50,7 +50,7 @@ impl Surface {
         Ok(capabilities)
     }
 
-    pub fn get_physical_device_surface_formats(
+    pub(crate) fn get_physical_device_surface_formats(
         &self,
         physical_device: &PhysicalDevice,
     ) -> Result<Vec<SurfaceFormatKHR>> {
@@ -61,7 +61,7 @@ impl Surface {
         Ok(formats)
     }
 
-    pub fn get_physical_device_surface_present_modes(
+    pub(crate) fn get_physical_device_surface_present_modes(
         &self,
         physical_device: &PhysicalDevice,
     ) -> Result<Vec<PresentModeKHR>> {
@@ -72,7 +72,7 @@ impl Surface {
         Ok(modes)
     }
 
-    pub fn get_physical_device_surface_support(
+    pub(crate) fn get_physical_device_surface_support(
         &self,
         physical_device: &PhysicalDevice,
         queue_family_index: u32,
