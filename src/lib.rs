@@ -1,7 +1,9 @@
+mod graphics_pipeline;
 mod image_view;
 mod instance;
 mod logical_device;
 mod physical_device_surface;
+mod shaders;
 mod surface;
 mod swapchain;
 
@@ -12,6 +14,7 @@ use ash::vk::{
     Bool32, DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
     DebugUtilsMessengerCallbackDataEXT, DebugUtilsMessengerCreateInfoEXT, KHR_SWAPCHAIN_NAME,
 };
+pub use graphics_pipeline::GraphicsPipeline;
 pub use image_view::ImageView;
 pub use instance::Instance;
 pub use logical_device::LogicalDevice;

@@ -1,30 +1,21 @@
 use std::{ffi::CStr, rc::Rc};
 
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, Result};
 use ash::{
     ext::debug_utils,
     vk::{
-        self, AccessFlags, AttachmentDescription, AttachmentLoadOp, AttachmentReference,
-        AttachmentStoreOp, ClearColorValue, ClearValue, ColorComponentFlags, CommandBuffer,
-        CommandBufferAllocateInfo, CommandBufferBeginInfo, CommandBufferLevel,
-        CommandBufferResetFlags, CommandPool, CommandPoolCreateFlags, CommandPoolCreateInfo,
-        CullModeFlags, DebugUtilsMessengerEXT, Fence, FenceCreateFlags, FenceCreateInfo,
-        Framebuffer, FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, ImageLayout,
-        Pipeline, PipelineBindPoint, PipelineCache, PipelineColorBlendAttachmentState,
-        PipelineColorBlendStateCreateInfo, PipelineInputAssemblyStateCreateInfo, PipelineLayout,
-        PipelineLayoutCreateInfo, PipelineMultisampleStateCreateInfo,
-        PipelineRasterizationStateCreateInfo, PipelineShaderStageCreateInfo, PipelineStageFlags,
-        PipelineVertexInputStateCreateInfo, PipelineViewportStateCreateInfo, PolygonMode,
-        PresentInfoKHR, PrimitiveTopology, Rect2D, RenderPass, RenderPassBeginInfo,
-        RenderPassCreateInfo, SampleCountFlags, Semaphore, SemaphoreCreateInfo, ShaderModule,
-        ShaderModuleCreateInfo, ShaderStageFlags, SubmitInfo, SubpassContents, SubpassDependency,
-        SubpassDescription, Viewport, SUBPASS_EXTERNAL,
+        self, ClearColorValue, ClearValue, CommandBuffer, CommandBufferAllocateInfo,
+        CommandBufferBeginInfo, CommandBufferLevel, CommandBufferResetFlags, CommandPool,
+        CommandPoolCreateFlags, CommandPoolCreateInfo, DebugUtilsMessengerEXT, Fence,
+        FenceCreateFlags, FenceCreateInfo, Framebuffer, FramebufferCreateInfo, PipelineBindPoint,
+        PipelineStageFlags, PresentInfoKHR, Rect2D, RenderPassBeginInfo, Semaphore,
+        SemaphoreCreateInfo, SubmitInfo, SubpassContents,
     },
     Device, Entry,
 };
 use rusty_games::{
-    get_debug_messenger_create_info, init_logging, Instance, LogicalDevice, PhysicalDeviceSurface,
-    Surface, Swapchain,
+    get_debug_messenger_create_info, init_logging, GraphicsPipeline, Instance, LogicalDevice,
+    PhysicalDeviceSurface, Surface, Swapchain,
 };
 use tracing::info;
 use winit::{
@@ -62,12 +53,8 @@ struct App {
     debug_utils: Option<DebugUtilsExt>,
     /// See swapchain manager struct docs
     swapchain: Swapchain,
-    /// render pass configuration for graphics pipeline
-    render_pass: RenderPass,
-    /// layout for dynamic variables within the graphics pipeline
-    pipeline_layout: PipelineLayout,
     /// The graphics pipeline itself
-    pipeline: Pipeline,
+    pipeline: GraphicsPipeline,
     /// The frame buffers for use in rendering images
     frame_buffers: Vec<Framebuffer>,
     /// Command pool responsible for managing memory and creating
@@ -104,22 +91,9 @@ impl App {
         let swapchain = Swapchain::new(&instance, &window, &logical_device)?;
 
         // configure graphics pipeline
-        let shader_modules = Self::create_shader_modules(&logical_device)?;
-        let pipeline_layout = Self::create_pipeline_layout(&logical_device)?;
-        let render_pass = Self::create_render_pass(&logical_device, &swapchain)?;
-        let pipeline = Self::create_graphics_pipeline(
-            &logical_device,
-            &pipeline_layout,
-            &render_pass,
-            &shader_modules,
-            &swapchain,
-        )?;
+        let pipeline = GraphicsPipeline::new(&logical_device, &swapchain)?;
 
-        for (shader_module, _) in shader_modules {
-            unsafe { logical_device.destroy_shader_module(shader_module, None) }
-        }
-
-        let frame_buffers = Self::create_frame_buffers(&logical_device, &render_pass, &swapchain)?;
+        let frame_buffers = Self::create_frame_buffers(&logical_device, &pipeline, &swapchain)?;
 
         // configure command buffers
         let command_pool = Self::create_command_pool(&logical_device)?;
@@ -131,8 +105,6 @@ impl App {
             debug_utils,
             device: logical_device,
             swapchain,
-            render_pass,
-            pipeline_layout,
             pipeline,
             frame_buffers,
             command_pool,
@@ -233,7 +205,7 @@ impl App {
         let clear_values = [clear_value];
 
         let render_pass_begin_info = RenderPassBeginInfo::default()
-            .render_pass(self.render_pass)
+            .render_pass(**self.pipeline.get_render_pass())
             .framebuffer(self.frame_buffers[image_index])
             .render_area(render_area)
             .clear_values(&clear_values);
@@ -246,7 +218,7 @@ impl App {
             self.device.cmd_bind_pipeline(
                 self.command_buffer,
                 PipelineBindPoint::GRAPHICS,
-                self.pipeline,
+                *self.pipeline,
             );
             self.device.cmd_draw(self.command_buffer, 3, 1, 0, 0);
             self.device.cmd_end_render_pass(self.command_buffer);
@@ -314,7 +286,7 @@ impl App {
     /// Creates the frame buffers
     fn create_frame_buffers(
         logical_device: &Device,
-        render_pass: &RenderPass,
+        graphics_pipeline: &GraphicsPipeline,
         swapchain: &Swapchain,
     ) -> Result<Vec<Framebuffer>> {
         let swapchain_extent = swapchain.get_extent();
@@ -324,7 +296,7 @@ impl App {
             .map(|image_view| {
                 let attachments = [**image_view];
                 let create_info = FramebufferCreateInfo::default()
-                    .render_pass(*render_pass)
+                    .render_pass(**graphics_pipeline.get_render_pass())
                     .attachments(&attachments)
                     .height(swapchain_extent.height)
                     .width(swapchain_extent.width)
@@ -334,205 +306,6 @@ impl App {
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(frame_buffers)
-    }
-
-    /// Configures the attachments and subpasses in the render pass
-    fn create_render_pass(logical_device: &Device, swapchain: &Swapchain) -> Result<RenderPass> {
-        let attachment_description = [AttachmentDescription::default()
-            // ensure attachment format matches that of swapchain
-            .format(swapchain.get_surface_format().format)
-            // not using multisampling, so stick to 1 sample
-            .samples(SampleCountFlags::TYPE_1)
-            // clear the data in the attachment before rendering
-            .load_op(AttachmentLoadOp::CLEAR)
-            // dont care about layout of previous image, because we're clearing it
-            // anyway
-            .initial_layout(ImageLayout::UNDEFINED)
-            // store the results in memory for later user after rendering
-            .store_op(AttachmentStoreOp::STORE)
-            // transition to a layout suitable for presentation
-            .final_layout(ImageLayout::PRESENT_SRC_KHR)
-            // not using stencils
-            .stencil_load_op(AttachmentLoadOp::DONT_CARE)
-            .stencil_store_op(AttachmentStoreOp::DONT_CARE)];
-
-        let attachment_ref = [AttachmentReference::default()
-            .attachment(0)
-            .layout(ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
-
-        let subpass_description = [SubpassDescription::default()
-            .pipeline_bind_point(PipelineBindPoint::GRAPHICS)
-            .color_attachments(&attachment_ref)];
-
-        let subpass_dependencies = [SubpassDependency::default()
-            .src_subpass(SUBPASS_EXTERNAL)
-            .dst_subpass(0)
-            .src_stage_mask(PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-            .src_access_mask(AccessFlags::empty())
-            .dst_stage_mask(PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-            .dst_access_mask(AccessFlags::COLOR_ATTACHMENT_WRITE)];
-
-        let render_pass_create_info = RenderPassCreateInfo::default()
-            .attachments(&attachment_description)
-            .subpasses(&subpass_description)
-            .dependencies(&subpass_dependencies);
-
-        let render_pass =
-            unsafe { logical_device.create_render_pass(&render_pass_create_info, None)? };
-
-        Ok(render_pass)
-    }
-
-    /// Creates the pipeline layout for passing dynamic values to the pipeline
-    fn create_pipeline_layout(logical_device: &Device) -> Result<PipelineLayout> {
-        let pipeline_layout_create_info = PipelineLayoutCreateInfo::default();
-        let pipeline_layout =
-            unsafe { logical_device.create_pipeline_layout(&pipeline_layout_create_info, None)? };
-        Ok(pipeline_layout)
-    }
-
-    /// Creates the shader modules and their associated pipeline create infos for use
-    /// in creating the graphics pipeline
-    fn create_shader_modules<'a>(
-        logical_device: &Device,
-    ) -> Result<[(ShaderModule, ShaderStageFlags); 2]> {
-        let vertex_shader_code = include_bytes!("../target/shaders/vert.spv");
-        ensure!(
-            vertex_shader_code.len() % 4 == 0,
-            "Invalid vertex shader code read!"
-        );
-        let vertex_shader_module = Self::create_shader_module(logical_device, vertex_shader_code)?;
-
-        let fragment_shader_code = include_bytes!("../target/shaders/frag.spv");
-        ensure!(
-            fragment_shader_code.len() % 4 == 0,
-            "Invalid fragment shader code read!"
-        );
-        let fragment_shader_module =
-            Self::create_shader_module(logical_device, fragment_shader_code)?;
-
-        Ok([
-            (vertex_shader_module, ShaderStageFlags::VERTEX),
-            (fragment_shader_module, ShaderStageFlags::FRAGMENT),
-        ])
-    }
-
-    /// Configures the fixed function stages and creates a graphics pipeline to start submitting commands to
-    fn create_graphics_pipeline(
-        logical_device: &Device,
-        pipeline_layout: &PipelineLayout,
-        render_pass: &RenderPass,
-        shader_stages: &[(ShaderModule, ShaderStageFlags)],
-        swapchain: &Swapchain,
-    ) -> Result<Pipeline> {
-        let shader_entrypoint_name = CStr::from_bytes_with_nul(b"main\0")?;
-        let shader_stage_create_infos = shader_stages
-            .into_iter()
-            .map(|(shader_module, shader_stage)| {
-                PipelineShaderStageCreateInfo::default()
-                    .stage(*shader_stage)
-                    .module(*shader_module)
-                    .name(&shader_entrypoint_name)
-            })
-            .collect::<Vec<_>>();
-
-        // we're not using vertex buffers, so just an empty object
-        let pipeline_vertex_input_state_create_info = PipelineVertexInputStateCreateInfo::default();
-
-        // configure the vertexes to be interpreted as a list of triangles
-        let pipeline_input_assembly_state_create_info =
-            PipelineInputAssemblyStateCreateInfo::default()
-                .topology(PrimitiveTopology::TRIANGLE_LIST)
-                .primitive_restart_enable(false);
-
-        // default viewport covering entire swapchain extent, no depth filtering
-        let swapchain_extent = *swapchain.get_extent();
-        let viewport = [Viewport::default()
-            .x(0.0f32)
-            .y(0.0f32)
-            .width(swapchain_extent.width as f32)
-            .height(swapchain_extent.height as f32)
-            .min_depth(0.0f32)
-            .max_depth(1.0f32)];
-
-        // default scissor, doing nothing
-        let scissor = [Rect2D::default().extent(swapchain_extent)];
-
-        let viewport_create_info = PipelineViewportStateCreateInfo::default()
-            .viewports(&viewport)
-            .scissors(&scissor);
-
-        let rasteratization_create_info = PipelineRasterizationStateCreateInfo::default()
-            // setting this to false discards points before the near plane or after the far plane
-            // setting it to true would instead clamp them
-            .depth_clamp_enable(false)
-            // setting this to true would disable the rasterizer
-            .rasterizer_discard_enable(false)
-            // create filled polygons, instead of lines or points
-            .polygon_mode(PolygonMode::FILL)
-            // default line width
-            .line_width(1.0f32)
-            // culling will remove faces from the rasterization output
-            // setting it to back removes the back faces
-            .cull_mode(CullModeFlags::BACK)
-            // determines how to know which face is front or back
-            // in CLOCKWISE faces composed of verticies traveling in a clockwise direction are front facing
-            .front_face(FrontFace::CLOCKWISE)
-            // disable depth biasing, mainly used for shadow mapping
-            .depth_bias_enable(false);
-
-        // disable multisampling
-        let multisampling_state_create_info = PipelineMultisampleStateCreateInfo::default()
-            .sample_shading_enable(false)
-            .rasterization_samples(SampleCountFlags::TYPE_1);
-
-        // settings for color blending per framebuffer. disable this for now, resulting in color output
-        // from vertex shader passing thru
-        let color_blend_attachment_state = [PipelineColorBlendAttachmentState::default()
-            .blend_enable(false)
-            .color_write_mask(ColorComponentFlags::RGBA)];
-
-        // settings for global color blending. disable this as well.
-        let pipeline_color_blend_state = PipelineColorBlendStateCreateInfo::default()
-            .logic_op_enable(false)
-            .attachments(&color_blend_attachment_state);
-
-        let graphics_pipeline_create_info = [GraphicsPipelineCreateInfo::default()
-            .stages(&shader_stage_create_infos)
-            .vertex_input_state(&pipeline_vertex_input_state_create_info)
-            .input_assembly_state(&pipeline_input_assembly_state_create_info)
-            .render_pass(*render_pass)
-            .color_blend_state(&pipeline_color_blend_state)
-            .multisample_state(&multisampling_state_create_info)
-            .viewport_state(&viewport_create_info)
-            .rasterization_state(&rasteratization_create_info)
-            .layout(*pipeline_layout)];
-
-        let graphics_pipeline = unsafe {
-            logical_device.create_graphics_pipelines(
-                PipelineCache::null(),
-                &graphics_pipeline_create_info,
-                None,
-            )
-        }
-        .map_err(|(_, r)| r)?;
-
-        Ok(graphics_pipeline[0])
-    }
-
-    /// Reads in the raw bytes and creates a shader module from the read byte code
-    fn create_shader_module(logical_device: &Device, code: &[u8]) -> Result<ShaderModule> {
-        let code = code
-            .chunks_exact(4)
-            .map(|chunks| {
-                let chunks = [chunks[0], chunks[1], chunks[2], chunks[3]];
-                u32::from_ne_bytes(chunks)
-            })
-            .collect::<Vec<_>>();
-        let shader_module_create_info = ShaderModuleCreateInfo::default().code(&code);
-        let shader_module =
-            unsafe { logical_device.create_shader_module(&shader_module_create_info, None)? };
-        Ok(shader_module)
     }
 
     /// Queries the system for the available physical devices, and picks the most appropriate one for use.
@@ -592,13 +365,6 @@ impl Drop for App {
 
         for frame_buffer in &self.frame_buffers {
             unsafe { self.device.destroy_framebuffer(*frame_buffer, None) }
-        }
-
-        unsafe {
-            self.device.destroy_pipeline(self.pipeline, None);
-            self.device.destroy_render_pass(self.render_pass, None);
-            self.device
-                .destroy_pipeline_layout(self.pipeline_layout, None);
         }
     }
 }
