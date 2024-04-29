@@ -60,8 +60,6 @@ struct App {
     device: Rc<LogicalDevice>,
     /// The debug utils extension, if enabled
     debug_utils: Option<DebugUtilsExt>,
-    /// The linkage to the DLL for vulkan
-    _entry: Entry,
     /// See swapchain manager struct docs
     swapchain: Swapchain,
     /// render pass configuration for graphics pipeline
@@ -98,9 +96,9 @@ impl App {
 
         // init vulkan
         let entry = Entry::linked();
-        let instance = Rc::new(Instance::new(&entry, required_extensions)?);
-        let debug_utils = Self::setup_debug_messenger(&entry, &instance)?;
-        let surface = Surface::new(&entry, &instance, &window)?;
+        let instance = Rc::new(Instance::new(entry, required_extensions)?);
+        let debug_utils = Self::setup_debug_messenger(&instance)?;
+        let surface = Surface::new(&instance, &window)?;
         let physical_device_surface = Self::pick_physical_device(&instance, &Rc::new(surface))?;
         let logical_device = Rc::new(TryInto::<LogicalDevice>::try_into(physical_device_surface)?);
         let swapchain = Swapchain::new(&instance, &window, &logical_device)?;
@@ -130,7 +128,6 @@ impl App {
             Self::create_sync_object(&&logical_device)?;
 
         Ok(Self {
-            _entry: entry,
             debug_utils,
             device: logical_device,
             swapchain,
@@ -555,10 +552,10 @@ impl App {
 
     /// If validations are enabled, creates and registers the DebugUtils extension which prints
     /// logs to the console.
-    fn setup_debug_messenger(entry: &Entry, instance: &Instance) -> Result<Option<DebugUtilsExt>> {
+    fn setup_debug_messenger(instance: &Instance) -> Result<Option<DebugUtilsExt>> {
         if ENABLE_VALIDATIONS {
             let debug_utils_messenger_create_info = get_debug_messenger_create_info();
-            let debug_utils = debug_utils::Instance::new(entry, instance);
+            let debug_utils = debug_utils::Instance::new(instance.get_entry(), instance);
             let extension = unsafe {
                 debug_utils
                     .create_debug_utils_messenger(&debug_utils_messenger_create_info, None)?

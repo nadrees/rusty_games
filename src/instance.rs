@@ -19,12 +19,13 @@ const ENABLE_VALIDATIONS: bool = false;
 
 pub struct Instance {
     instance: ash::Instance,
+    entry: Entry,
 }
 
 impl Instance {
     /// Creates an Instance to interact with the core of Vulkan. Registers the needed extensions and
     /// layers, as well as basic information about the application.
-    pub fn new(entry: &Entry, required_extensions: Vec<&str>) -> Result<Self> {
+    pub fn new(entry: Entry, required_extensions: Vec<&str>) -> Result<Self> {
         let appname = CString::new(env!("CARGO_PKG_NAME"))?;
         let version_major = env!("CARGO_PKG_VERSION_MAJOR").parse::<u32>()?;
         let version_minor = env!("CARGO_PKG_VERSION_MINOR").parse::<u32>()?;
@@ -66,7 +67,11 @@ impl Instance {
 
         let instance = unsafe { entry.create_instance(&instance_create_info, None)? };
 
-        Ok(Self { instance })
+        Ok(Self { instance, entry })
+    }
+
+    pub fn get_entry(&self) -> &Entry {
+        &self.entry
     }
 
     /// Returns the needed instance exensions for Vulkan to function correctly.

@@ -4,7 +4,6 @@ use anyhow::Result;
 use ash::{
     khr::surface,
     vk::{PhysicalDevice, PresentModeKHR, SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR},
-    Entry,
 };
 use winit::{
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
@@ -21,11 +20,11 @@ pub struct Surface {
 }
 
 impl Surface {
-    pub fn new(entry: &Entry, instance: &Rc<Instance>, window: &Window) -> Result<Self> {
-        let surface_fn = surface::Instance::new(entry, instance);
+    pub fn new(instance: &Rc<Instance>, window: &Window) -> Result<Self> {
+        let surface_fn = surface::Instance::new(instance.get_entry(), instance);
         let surface_ptr = unsafe {
             ash_window::create_surface(
-                entry,
+                instance.get_entry(),
                 instance,
                 window.display_handle()?.as_raw(),
                 window.window_handle()?.as_raw(),
