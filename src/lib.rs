@@ -2,6 +2,7 @@ mod instance;
 mod logical_device;
 mod physical_device_surface;
 mod surface;
+mod swapchain;
 
 use std::ffi::CStr;
 
@@ -15,6 +16,7 @@ pub use logical_device::LogicalDevice;
 pub use physical_device_surface::{PhysicalDeviceSurface, SwapChainSupportDetails};
 use simple_logger::{set_up_color_terminal, SimpleLogger};
 pub use surface::Surface;
+pub use swapchain::Swapchain;
 use tracing::{event, Level};
 
 const REQUIRED_DEVICE_EXTENSIONS: &[&CStr] = &[KHR_SWAPCHAIN_NAME];

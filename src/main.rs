@@ -1,34 +1,31 @@
-use std::{collections::HashSet, ffi::CStr, rc::Rc};
+use std::{ffi::CStr, rc::Rc};
 
 use anyhow::{anyhow, ensure, Result};
 use ash::{
     ext::debug_utils,
-    khr::swapchain,
     vk::{
         self, AccessFlags, AttachmentDescription, AttachmentLoadOp, AttachmentReference,
         AttachmentStoreOp, ClearColorValue, ClearValue, ColorComponentFlags, CommandBuffer,
         CommandBufferAllocateInfo, CommandBufferBeginInfo, CommandBufferLevel,
         CommandBufferResetFlags, CommandPool, CommandPoolCreateFlags, CommandPoolCreateInfo,
-        ComponentMapping, ComponentSwizzle, CompositeAlphaFlagsKHR, CullModeFlags,
-        DebugUtilsMessengerEXT, Fence, FenceCreateFlags, FenceCreateInfo, Framebuffer,
-        FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Image, ImageAspectFlags,
-        ImageLayout, ImageSubresourceRange, ImageUsageFlags, ImageView, ImageViewCreateInfo,
-        ImageViewType, Pipeline, PipelineBindPoint, PipelineCache,
+        ComponentMapping, ComponentSwizzle, CullModeFlags, DebugUtilsMessengerEXT, Fence,
+        FenceCreateFlags, FenceCreateInfo, Framebuffer, FramebufferCreateInfo, FrontFace,
+        GraphicsPipelineCreateInfo, Image, ImageAspectFlags, ImageLayout, ImageSubresourceRange,
+        ImageView, ImageViewCreateInfo, ImageViewType, Pipeline, PipelineBindPoint, PipelineCache,
         PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
         PipelineInputAssemblyStateCreateInfo, PipelineLayout, PipelineLayoutCreateInfo,
         PipelineMultisampleStateCreateInfo, PipelineRasterizationStateCreateInfo,
         PipelineShaderStageCreateInfo, PipelineStageFlags, PipelineVertexInputStateCreateInfo,
         PipelineViewportStateCreateInfo, PolygonMode, PresentInfoKHR, PrimitiveTopology, Rect2D,
         RenderPass, RenderPassBeginInfo, RenderPassCreateInfo, SampleCountFlags, Semaphore,
-        SemaphoreCreateInfo, ShaderModule, ShaderModuleCreateInfo, ShaderStageFlags, SharingMode,
-        SubmitInfo, SubpassContents, SubpassDependency, SubpassDescription, SwapchainCreateInfoKHR,
-        SwapchainKHR, Viewport, SUBPASS_EXTERNAL,
+        SemaphoreCreateInfo, ShaderModule, ShaderModuleCreateInfo, ShaderStageFlags, SubmitInfo,
+        SubpassContents, SubpassDependency, SubpassDescription, Viewport, SUBPASS_EXTERNAL,
     },
     Device, Entry,
 };
 use rusty_games::{
     get_debug_messenger_create_info, init_logging, Instance, LogicalDevice, PhysicalDeviceSurface,
-    Surface, SwapChainSupportDetails,
+    Surface, Swapchain,
 };
 use tracing::info;
 use winit::{
@@ -61,17 +58,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 struct App {
     /// The logical device for interfacing with the
     /// physical hardware
-    device: LogicalDevice,
+    device: Rc<LogicalDevice>,
     /// The debug utils extension, if enabled
     debug_utils: Option<DebugUtilsExt>,
-    /// The actual window presented to the user
-    /// Need to keep a reference to this for the life
-    /// off the app or it will get cleaned up
-    window: Window,
     /// The linkage to the DLL for vulkan
     _entry: Entry,
     /// See swapchain manager struct docs
-    swapchain_manager: SwapChainManager,
+    swapchain: Swapchain,
     /// Images from the swap chain
     _images: Vec<Image>,
     /// Views to interact with the images
@@ -106,7 +99,7 @@ impl App {
                 .map(|extension| unsafe { CStr::from_ptr(*extension) }.to_str())
                 .collect::<Result<Vec<_>, _>>()?;
 
-        let window = Self::init_window(&event_loop)?;
+        let window = Rc::new(Self::init_window(&event_loop)?);
 
         // init vulkan
         let entry = Entry::linked();
@@ -114,37 +107,31 @@ impl App {
         let debug_utils = Self::setup_debug_messenger(&entry, &instance)?;
         let surface = Surface::new(&entry, &instance, &window)?;
         let physical_device_surface = Self::pick_physical_device(&instance, &Rc::new(surface))?;
-        let logical_device: LogicalDevice = physical_device_surface.try_into()?;
+        let logical_device = Rc::new(TryInto::<LogicalDevice>::try_into(physical_device_surface)?);
+        let swapchain = Swapchain::new(&instance, &window, &logical_device)?;
 
         // TODO: move these
-        let swapchain_manager = Self::create_swap_chain(&instance, &window, &logical_device)?;
-        let images = swapchain_manager.get_swapchain_images()?;
-        let image_views = Self::create_image_views(&logical_device, &swapchain_manager, &images)?;
+        let images = swapchain.get_swapchain_images()?;
+        let image_views = Self::create_image_views(&logical_device, &swapchain, &images)?;
 
         // configure graphics pipeline
         let shader_modules = Self::create_shader_modules(&logical_device)?;
         let pipeline_layout = Self::create_pipeline_layout(&logical_device)?;
-        let render_pass = Self::create_render_pass(&logical_device, &swapchain_manager)?;
+        let render_pass = Self::create_render_pass(&logical_device, &swapchain)?;
         let pipeline = Self::create_graphics_pipeline(
             &logical_device,
             &pipeline_layout,
             &render_pass,
             &shader_modules,
-            &swapchain_manager,
-            &window,
+            &swapchain,
         )?;
 
         for (shader_module, _) in shader_modules {
             unsafe { logical_device.destroy_shader_module(shader_module, None) }
         }
 
-        let frame_buffers = Self::create_frame_buffers(
-            &logical_device,
-            &image_views,
-            &render_pass,
-            &swapchain_manager,
-            &window,
-        )?;
+        let frame_buffers =
+            Self::create_frame_buffers(&logical_device, &image_views, &render_pass, &swapchain)?;
 
         // configure command buffers
         let command_pool = Self::create_command_pool(&logical_device)?;
@@ -156,8 +143,7 @@ impl App {
             _entry: entry,
             debug_utils,
             device: logical_device,
-            window,
-            swapchain_manager,
+            swapchain,
             _images: images,
             image_views,
             render_pass,
@@ -203,7 +189,7 @@ impl App {
         }
 
         let image_index = self
-            .swapchain_manager
+            .swapchain
             .acquire_next_image_index(&self.image_available_semaphore)?;
 
         unsafe {
@@ -230,15 +216,14 @@ impl App {
             )?
         }
 
-        let swapchains = [self.swapchain_manager.swapchain];
+        let swapchains = [*self.swapchain.get_handle()];
         let image_indicies = [image_index];
         let present_info = PresentInfoKHR::default()
             .wait_semaphores(&signal_semaphores)
             .swapchains(&swapchains)
             .image_indices(&image_indicies);
         unsafe {
-            self.swapchain_manager
-                .device
+            self.swapchain
                 .queue_present(self.device.get_queues().present, &present_info)?
         };
 
@@ -253,11 +238,8 @@ impl App {
                 .begin_command_buffer(self.command_buffer, &command_buffer_begin_info)?
         };
 
-        let swapchain_extent = self
-            .swapchain_manager
-            .support_details
-            .choose_swap_extent(&self.window);
-        let render_area = Rect2D::default().extent(swapchain_extent);
+        let swapchain_extent = self.swapchain.get_extent();
+        let render_area = Rect2D::default().extent(*swapchain_extent);
 
         let mut clear_value = ClearValue::default();
         clear_value.color = ClearColorValue {
@@ -349,10 +331,9 @@ impl App {
         logical_device: &Device,
         image_views: &Vec<ImageView>,
         render_pass: &RenderPass,
-        swapchain_manager: &SwapChainManager,
-        window: &Window,
+        swapchain: &Swapchain,
     ) -> Result<Vec<Framebuffer>> {
-        let swapchain_extent = swapchain_manager.support_details.choose_swap_extent(window);
+        let swapchain_extent = swapchain.get_extent();
         let frame_buffers = image_views
             .iter()
             .map(|image_view| {
@@ -371,18 +352,10 @@ impl App {
     }
 
     /// Configures the attachments and subpasses in the render pass
-    fn create_render_pass(
-        logical_device: &Device,
-        swapchain_manager: &SwapChainManager,
-    ) -> Result<RenderPass> {
+    fn create_render_pass(logical_device: &Device, swapchain: &Swapchain) -> Result<RenderPass> {
         let attachment_description = [AttachmentDescription::default()
             // ensure attachment format matches that of swapchain
-            .format(
-                swapchain_manager
-                    .support_details
-                    .choose_swap_surface_format()
-                    .format,
-            )
+            .format(swapchain.get_surface_format().format)
             // not using multisampling, so stick to 1 sample
             .samples(SampleCountFlags::TYPE_1)
             // clear the data in the attachment before rendering
@@ -465,8 +438,7 @@ impl App {
         pipeline_layout: &PipelineLayout,
         render_pass: &RenderPass,
         shader_stages: &[(ShaderModule, ShaderStageFlags)],
-        swapchain_manager: &SwapChainManager,
-        window: &Window,
+        swapchain: &Swapchain,
     ) -> Result<Pipeline> {
         let shader_entrypoint_name = CStr::from_bytes_with_nul(b"main\0")?;
         let shader_stage_create_infos = shader_stages
@@ -489,7 +461,7 @@ impl App {
                 .primitive_restart_enable(false);
 
         // default viewport covering entire swapchain extent, no depth filtering
-        let swapchain_extent = swapchain_manager.support_details.choose_swap_extent(window);
+        let swapchain_extent = *swapchain.get_extent();
         let viewport = [Viewport::default()
             .x(0.0f32)
             .y(0.0f32)
@@ -581,12 +553,10 @@ impl App {
     /// Creates Image views from the provided images
     fn create_image_views(
         logical_device: &Device,
-        swapchain_manager: &SwapChainManager,
+        swapchain: &Swapchain,
         images: &Vec<Image>,
     ) -> Result<Vec<ImageView>> {
-        let format = swapchain_manager
-            .support_details
-            .choose_swap_surface_format();
+        let format = swapchain.get_surface_format();
         let image_views = images
             .iter()
             .map(|image| {
@@ -618,62 +588,6 @@ impl App {
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(image_views)
-    }
-
-    /// Creates the swap chain used to present render images to the screen
-    fn create_swap_chain(
-        instance: &Instance,
-        window: &Window,
-        logical_device: &LogicalDevice,
-    ) -> Result<SwapChainManager> {
-        let queue_indicies = logical_device.get_queue_family_indicies();
-        let queue_family_indicies = Vec::from_iter(HashSet::from([
-            queue_indicies.graphics_family.unwrap() as u32,
-            queue_indicies.present_family.unwrap() as u32,
-        ]));
-
-        let swap_chain_support = logical_device.get_swapchain_support_details();
-        let surface_format = swap_chain_support.choose_swap_surface_format();
-        let present_mode = swap_chain_support.choose_swap_present_mode();
-        let extent = swap_chain_support.choose_swap_extent(window);
-        let image_count = swap_chain_support.get_image_count();
-
-        let mut swap_chain_creation_info = SwapchainCreateInfoKHR::default()
-            .surface(***logical_device.get_surface())
-            .min_image_count(image_count)
-            .image_format(surface_format.format)
-            .image_color_space(surface_format.color_space)
-            .image_extent(extent)
-            .present_mode(present_mode)
-            // always 1 unless doing sterioscopic 3D
-            .image_array_layers(1)
-            // use images as color attachments for drawing color pictures to
-            .image_usage(ImageUsageFlags::COLOR_ATTACHMENT)
-            // no transform
-            .pre_transform(swap_chain_support.capabilities.current_transform)
-            // ignore alpha channel
-            .composite_alpha(CompositeAlphaFlagsKHR::OPAQUE)
-            // enable clipping, to discard pixels that aren't visible
-            .clipped(true)
-            .old_swapchain(SwapchainKHR::null());
-        if queue_family_indicies.len() == 1 {
-            swap_chain_creation_info =
-                swap_chain_creation_info.image_sharing_mode(SharingMode::EXCLUSIVE);
-        } else {
-            swap_chain_creation_info = swap_chain_creation_info
-                .image_sharing_mode(SharingMode::CONCURRENT)
-                .queue_family_indices(&queue_family_indicies);
-        }
-
-        let swapchain_device = swapchain::Device::new(instance, logical_device);
-        let swapchain =
-            unsafe { swapchain_device.create_swapchain(&swap_chain_creation_info, None) }?;
-
-        Ok(SwapChainManager {
-            device: swapchain_device,
-            support_details: swap_chain_support.clone(),
-            swapchain,
-        })
     }
 
     /// Queries the system for the available physical devices, and picks the most appropriate one for use.
@@ -745,8 +659,6 @@ impl Drop for App {
         for image_view in &self.image_views {
             unsafe { self.device.destroy_image_view(*image_view, None) }
         }
-
-        self.swapchain_manager.destroy_swapchain();
     }
 }
 
@@ -756,36 +668,4 @@ impl Drop for App {
 struct DebugUtilsExt {
     debug_utils: debug_utils::Instance,
     extension: DebugUtilsMessengerEXT,
-}
-
-/// Struct for holding references to swapchain
-struct SwapChainManager {
-    device: swapchain::Device,
-    support_details: SwapChainSupportDetails,
-    swapchain: SwapchainKHR,
-}
-
-impl SwapChainManager {
-    pub fn get_swapchain_images(&self) -> Result<Vec<Image>> {
-        let images = unsafe { self.device.get_swapchain_images(self.swapchain)? };
-        Ok(images)
-    }
-
-    pub fn destroy_swapchain(&mut self) {
-        unsafe { self.device.destroy_swapchain(self.swapchain, None) }
-    }
-
-    /// Aquires the index of the next image to use from the swapchain, and registers the
-    /// signal semaphore to be signaled when its ready for use.
-    pub fn acquire_next_image_index(&self, signal_semaphore: &Semaphore) -> Result<u32> {
-        let (index, _) = unsafe {
-            self.device.acquire_next_image(
-                self.swapchain,
-                u64::MAX,
-                *signal_semaphore,
-                Fence::null(),
-            )?
-        };
-        Ok(index)
-    }
 }
