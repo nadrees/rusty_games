@@ -1,3 +1,4 @@
+mod image_view;
 mod instance;
 mod logical_device;
 mod physical_device_surface;
@@ -11,6 +12,7 @@ use ash::vk::{
     Bool32, DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
     DebugUtilsMessengerCallbackDataEXT, DebugUtilsMessengerCreateInfoEXT, KHR_SWAPCHAIN_NAME,
 };
+pub use image_view::ImageView;
 pub use instance::Instance;
 pub use logical_device::LogicalDevice;
 pub use physical_device_surface::{PhysicalDeviceSurface, SwapChainSupportDetails};

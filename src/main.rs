@@ -8,18 +8,17 @@ use ash::{
         AttachmentStoreOp, ClearColorValue, ClearValue, ColorComponentFlags, CommandBuffer,
         CommandBufferAllocateInfo, CommandBufferBeginInfo, CommandBufferLevel,
         CommandBufferResetFlags, CommandPool, CommandPoolCreateFlags, CommandPoolCreateInfo,
-        ComponentMapping, ComponentSwizzle, CullModeFlags, DebugUtilsMessengerEXT, Fence,
-        FenceCreateFlags, FenceCreateInfo, Framebuffer, FramebufferCreateInfo, FrontFace,
-        GraphicsPipelineCreateInfo, Image, ImageAspectFlags, ImageLayout, ImageSubresourceRange,
-        ImageView, ImageViewCreateInfo, ImageViewType, Pipeline, PipelineBindPoint, PipelineCache,
-        PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
-        PipelineInputAssemblyStateCreateInfo, PipelineLayout, PipelineLayoutCreateInfo,
-        PipelineMultisampleStateCreateInfo, PipelineRasterizationStateCreateInfo,
-        PipelineShaderStageCreateInfo, PipelineStageFlags, PipelineVertexInputStateCreateInfo,
-        PipelineViewportStateCreateInfo, PolygonMode, PresentInfoKHR, PrimitiveTopology, Rect2D,
-        RenderPass, RenderPassBeginInfo, RenderPassCreateInfo, SampleCountFlags, Semaphore,
-        SemaphoreCreateInfo, ShaderModule, ShaderModuleCreateInfo, ShaderStageFlags, SubmitInfo,
-        SubpassContents, SubpassDependency, SubpassDescription, Viewport, SUBPASS_EXTERNAL,
+        CullModeFlags, DebugUtilsMessengerEXT, Fence, FenceCreateFlags, FenceCreateInfo,
+        Framebuffer, FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, ImageLayout,
+        Pipeline, PipelineBindPoint, PipelineCache, PipelineColorBlendAttachmentState,
+        PipelineColorBlendStateCreateInfo, PipelineInputAssemblyStateCreateInfo, PipelineLayout,
+        PipelineLayoutCreateInfo, PipelineMultisampleStateCreateInfo,
+        PipelineRasterizationStateCreateInfo, PipelineShaderStageCreateInfo, PipelineStageFlags,
+        PipelineVertexInputStateCreateInfo, PipelineViewportStateCreateInfo, PolygonMode,
+        PresentInfoKHR, PrimitiveTopology, Rect2D, RenderPass, RenderPassBeginInfo,
+        RenderPassCreateInfo, SampleCountFlags, Semaphore, SemaphoreCreateInfo, ShaderModule,
+        ShaderModuleCreateInfo, ShaderStageFlags, SubmitInfo, SubpassContents, SubpassDependency,
+        SubpassDescription, Viewport, SUBPASS_EXTERNAL,
     },
     Device, Entry,
 };
@@ -65,10 +64,6 @@ struct App {
     _entry: Entry,
     /// See swapchain manager struct docs
     swapchain: Swapchain,
-    /// Images from the swap chain
-    _images: Vec<Image>,
-    /// Views to interact with the images
-    image_views: Vec<ImageView>,
     /// render pass configuration for graphics pipeline
     render_pass: RenderPass,
     /// layout for dynamic variables within the graphics pipeline
@@ -110,10 +105,6 @@ impl App {
         let logical_device = Rc::new(TryInto::<LogicalDevice>::try_into(physical_device_surface)?);
         let swapchain = Swapchain::new(&instance, &window, &logical_device)?;
 
-        // TODO: move these
-        let images = swapchain.get_swapchain_images()?;
-        let image_views = Self::create_image_views(&logical_device, &swapchain, &images)?;
-
         // configure graphics pipeline
         let shader_modules = Self::create_shader_modules(&logical_device)?;
         let pipeline_layout = Self::create_pipeline_layout(&logical_device)?;
@@ -130,8 +121,7 @@ impl App {
             unsafe { logical_device.destroy_shader_module(shader_module, None) }
         }
 
-        let frame_buffers =
-            Self::create_frame_buffers(&logical_device, &image_views, &render_pass, &swapchain)?;
+        let frame_buffers = Self::create_frame_buffers(&logical_device, &render_pass, &swapchain)?;
 
         // configure command buffers
         let command_pool = Self::create_command_pool(&logical_device)?;
@@ -144,8 +134,6 @@ impl App {
             debug_utils,
             device: logical_device,
             swapchain,
-            _images: images,
-            image_views,
             render_pass,
             pipeline_layout,
             pipeline,
@@ -329,15 +317,15 @@ impl App {
     /// Creates the frame buffers
     fn create_frame_buffers(
         logical_device: &Device,
-        image_views: &Vec<ImageView>,
         render_pass: &RenderPass,
         swapchain: &Swapchain,
     ) -> Result<Vec<Framebuffer>> {
         let swapchain_extent = swapchain.get_extent();
-        let frame_buffers = image_views
+        let frame_buffers = swapchain
+            .get_image_views()
             .iter()
             .map(|image_view| {
-                let attachments = [*image_view];
+                let attachments = [**image_view];
                 let create_info = FramebufferCreateInfo::default()
                     .render_pass(*render_pass)
                     .attachments(&attachments)
@@ -550,46 +538,6 @@ impl App {
         Ok(shader_module)
     }
 
-    /// Creates Image views from the provided images
-    fn create_image_views(
-        logical_device: &Device,
-        swapchain: &Swapchain,
-        images: &Vec<Image>,
-    ) -> Result<Vec<ImageView>> {
-        let format = swapchain.get_surface_format();
-        let image_views = images
-            .iter()
-            .map(|image| {
-                let image_view_create_info = ImageViewCreateInfo::default()
-                    .image(*image)
-                    // 2D images
-                    .view_type(ImageViewType::TYPE_2D)
-                    .format(format.format)
-                    // no swizzling
-                    .components(
-                        ComponentMapping::default()
-                            .a(ComponentSwizzle::IDENTITY)
-                            .b(ComponentSwizzle::IDENTITY)
-                            .g(ComponentSwizzle::IDENTITY)
-                            .r(ComponentSwizzle::IDENTITY),
-                    )
-                    // color images with no mipmapping or layers
-                    .subresource_range(
-                        ImageSubresourceRange::default()
-                            .aspect_mask(ImageAspectFlags::COLOR)
-                            .base_mip_level(0)
-                            .level_count(1)
-                            .base_array_layer(0)
-                            .layer_count(1),
-                    );
-                let image_view =
-                    unsafe { logical_device.create_image_view(&image_view_create_info, None)? };
-                Ok::<_, vk::Result>(image_view)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(image_views)
-    }
-
     /// Queries the system for the available physical devices, and picks the most appropriate one for use.
     fn pick_physical_device(
         instance: &Rc<Instance>,
@@ -654,10 +602,6 @@ impl Drop for App {
             self.device.destroy_render_pass(self.render_pass, None);
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
-        }
-
-        for image_view in &self.image_views {
-            unsafe { self.device.destroy_image_view(*image_view, None) }
         }
     }
 }

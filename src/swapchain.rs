@@ -10,17 +10,17 @@ use ash::{
 };
 use winit::window::Window;
 
-use crate::{Instance, LogicalDevice};
+use crate::{ImageView, Instance, LogicalDevice};
 
 pub struct Swapchain {
     swapchain_fn: swapchain::Device,
     swapchain_ptr: SwapchainKHR,
     extent: Extent2D,
     surface_format: SurfaceFormatKHR,
+    image_views: Vec<ImageView>,
     // references we need to keep to ensure
     // we are cleaned up before they are
     _instance: Rc<Instance>,
-    _logical_device: Rc<LogicalDevice>,
     _window: Rc<Window>,
 }
 
@@ -80,14 +80,17 @@ impl Swapchain {
             .get_swapchain_support_details()
             .choose_swap_surface_format();
 
+        let images = unsafe { swapchain_device.get_swapchain_images(swapchain)? };
+        let image_views = create_image_views(logical_device, *surface_format, images)?;
+
         Ok(Self {
             _instance: Rc::clone(instance),
             swapchain_fn: swapchain_device,
             swapchain_ptr: swapchain,
-            _logical_device: Rc::clone(logical_device),
             extent,
             surface_format: *surface_format,
             _window: Rc::clone(window),
+            image_views,
         })
     }
 
@@ -119,6 +122,10 @@ impl Swapchain {
     pub fn get_surface_format(&self) -> &SurfaceFormatKHR {
         &self.surface_format
     }
+
+    pub fn get_image_views(&self) -> &Vec<ImageView> {
+        &self.image_views
+    }
 }
 
 impl Drop for Swapchain {
@@ -136,4 +143,17 @@ impl Deref for Swapchain {
     fn deref(&self) -> &Self::Target {
         &self.swapchain_fn
     }
+}
+
+/// Creates Image views from the provided images
+fn create_image_views(
+    logical_device: &Rc<LogicalDevice>,
+    surface_format: SurfaceFormatKHR,
+    images: Vec<Image>,
+) -> Result<Vec<ImageView>> {
+    let image_views = images
+        .into_iter()
+        .map(|image| ImageView::new(logical_device, surface_format, image))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(image_views)
 }
