@@ -1,3 +1,4 @@
+mod frame_buffer;
 mod pipeline_layout;
 mod render_pass;
 
@@ -18,12 +19,13 @@ use crate::{
     LogicalDevice, Swapchain,
 };
 
-use self::{pipeline_layout::PipelineLayout, render_pass::RenderPass};
+use self::{frame_buffer::Framebuffer, pipeline_layout::PipelineLayout, render_pass::RenderPass};
 
 pub struct GraphicsPipeline {
     logical_device: Rc<LogicalDevice>,
     pipeline: Pipeline,
-    render_pass: RenderPass,
+    render_pass: Rc<RenderPass>,
+    framebuffers: Vec<Framebuffer>,
     // references we need to keep to ensure we are cleaned up before
     // they are
     _pipeline_layout: PipelineLayout,
@@ -33,7 +35,7 @@ impl GraphicsPipeline {
     pub fn new(logical_device: &Rc<LogicalDevice>, swapchain: &Swapchain) -> Result<Self> {
         let shaders = create_shader_modules(logical_device)?;
         let pipeline_layout = PipelineLayout::new(logical_device)?;
-        let render_pass = RenderPass::new(logical_device, swapchain)?;
+        let render_pass = Rc::new(RenderPass::new(logical_device, swapchain)?);
 
         let shader_entrypoint_name = CStr::from_bytes_with_nul(b"main\0")?;
         let shader_stage_create_infos = shaders
@@ -111,7 +113,7 @@ impl GraphicsPipeline {
             .stages(&shader_stage_create_infos)
             .vertex_input_state(&pipeline_vertex_input_state_create_info)
             .input_assembly_state(&pipeline_input_assembly_state_create_info)
-            .render_pass(*render_pass)
+            .render_pass(**render_pass)
             .color_blend_state(&pipeline_color_blend_state)
             .multisample_state(&multisampling_state_create_info)
             .viewport_state(&viewport_create_info)
@@ -131,16 +133,29 @@ impl GraphicsPipeline {
             unsafe { logical_device.destroy_shader_module(shader_module, None) }
         }
 
+        let framebuffers = swapchain
+            .create_image_views(logical_device)?
+            .into_iter()
+            .map(|image_view| {
+                Framebuffer::new(logical_device, &render_pass, &swapchain_extent, image_view)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         Ok(Self {
             logical_device: Rc::clone(logical_device),
             pipeline: graphics_pipeline[0],
             _pipeline_layout: pipeline_layout,
             render_pass,
+            framebuffers,
         })
     }
 
     pub fn get_render_pass(&self) -> &RenderPass {
         &self.render_pass
+    }
+
+    pub fn get_framebuffer_for_index(&self, idx: usize) -> &Framebuffer {
+        &self.framebuffers[idx]
     }
 }
 

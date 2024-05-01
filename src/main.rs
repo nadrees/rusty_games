@@ -4,12 +4,11 @@ use anyhow::{anyhow, Result};
 use ash::{
     ext::debug_utils,
     vk::{
-        self, ClearColorValue, ClearValue, CommandBuffer, CommandBufferAllocateInfo,
+        ClearColorValue, ClearValue, CommandBuffer, CommandBufferAllocateInfo,
         CommandBufferBeginInfo, CommandBufferLevel, CommandBufferResetFlags, CommandPool,
         CommandPoolCreateFlags, CommandPoolCreateInfo, DebugUtilsMessengerEXT, Fence,
-        FenceCreateFlags, FenceCreateInfo, Framebuffer, FramebufferCreateInfo, PipelineBindPoint,
-        PipelineStageFlags, PresentInfoKHR, Rect2D, RenderPassBeginInfo, Semaphore,
-        SemaphoreCreateInfo, SubmitInfo, SubpassContents,
+        FenceCreateFlags, FenceCreateInfo, PipelineBindPoint, PipelineStageFlags, PresentInfoKHR,
+        Rect2D, RenderPassBeginInfo, Semaphore, SemaphoreCreateInfo, SubmitInfo, SubpassContents,
     },
     Device, Entry,
 };
@@ -55,8 +54,6 @@ struct App {
     swapchain: Swapchain,
     /// The graphics pipeline itself
     pipeline: GraphicsPipeline,
-    /// The frame buffers for use in rendering images
-    frame_buffers: Vec<Framebuffer>,
     /// Command pool responsible for managing memory and creating
     /// command buffers
     command_pool: CommandPool,
@@ -93,8 +90,6 @@ impl App {
         // configure graphics pipeline
         let pipeline = GraphicsPipeline::new(&logical_device, &swapchain)?;
 
-        let frame_buffers = Self::create_frame_buffers(&logical_device, &pipeline, &swapchain)?;
-
         // configure command buffers
         let command_pool = Self::create_command_pool(&logical_device)?;
         let command_buffer = Self::create_command_buffer(&logical_device, &command_pool)?;
@@ -106,7 +101,6 @@ impl App {
             device: logical_device,
             swapchain,
             pipeline,
-            frame_buffers,
             command_pool,
             command_buffer,
             image_available_semaphore,
@@ -206,7 +200,7 @@ impl App {
 
         let render_pass_begin_info = RenderPassBeginInfo::default()
             .render_pass(**self.pipeline.get_render_pass())
-            .framebuffer(self.frame_buffers[image_index])
+            .framebuffer(**self.pipeline.get_framebuffer_for_index(image_index))
             .render_area(render_area)
             .clear_values(&clear_values);
         unsafe {
@@ -283,31 +277,6 @@ impl App {
         Ok(command_pool)
     }
 
-    /// Creates the frame buffers
-    fn create_frame_buffers(
-        logical_device: &Device,
-        graphics_pipeline: &GraphicsPipeline,
-        swapchain: &Swapchain,
-    ) -> Result<Vec<Framebuffer>> {
-        let swapchain_extent = swapchain.get_extent();
-        let frame_buffers = swapchain
-            .get_image_views()
-            .iter()
-            .map(|image_view| {
-                let attachments = [**image_view];
-                let create_info = FramebufferCreateInfo::default()
-                    .render_pass(**graphics_pipeline.get_render_pass())
-                    .attachments(&attachments)
-                    .height(swapchain_extent.height)
-                    .width(swapchain_extent.width)
-                    .layers(1);
-                let framebuffer = unsafe { logical_device.create_framebuffer(&create_info, None)? };
-                Ok::<_, vk::Result>(framebuffer)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(frame_buffers)
-    }
-
     /// Queries the system for the available physical devices, and picks the most appropriate one for use.
     fn pick_physical_device(
         instance: &Rc<Instance>,
@@ -361,10 +330,6 @@ impl Drop for App {
                 .destroy_semaphore(self.render_finished_semaphore, None);
             self.device.destroy_fence(self.in_flight_fence, None);
             self.device.destroy_command_pool(self.command_pool, None);
-        }
-
-        for frame_buffer in &self.frame_buffers {
-            unsafe { self.device.destroy_framebuffer(*frame_buffer, None) }
         }
     }
 }

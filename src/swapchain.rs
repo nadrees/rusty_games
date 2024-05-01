@@ -17,7 +17,6 @@ pub struct Swapchain {
     swapchain_ptr: SwapchainKHR,
     extent: Extent2D,
     surface_format: SurfaceFormatKHR,
-    image_views: Vec<ImageView>,
     // references we need to keep to ensure
     // we are cleaned up before they are
     _instance: Rc<Instance>,
@@ -80,9 +79,6 @@ impl Swapchain {
             .get_swapchain_support_details()
             .choose_swap_surface_format();
 
-        let images = unsafe { swapchain_device.get_swapchain_images(swapchain)? };
-        let image_views = create_image_views(logical_device, *surface_format, images)?;
-
         Ok(Self {
             _instance: Rc::clone(instance),
             swapchain_fn: swapchain_device,
@@ -90,7 +86,6 @@ impl Swapchain {
             extent,
             surface_format: *surface_format,
             _window: Rc::clone(window),
-            image_views,
         })
     }
 
@@ -123,8 +118,10 @@ impl Swapchain {
         &self.surface_format
     }
 
-    pub fn get_image_views(&self) -> &Vec<ImageView> {
-        &self.image_views
+    pub fn create_image_views(&self, logical_device: &Rc<LogicalDevice>) -> Result<Vec<ImageView>> {
+        let images = unsafe { self.swapchain_fn.get_swapchain_images(self.swapchain_ptr)? };
+        let image_views = create_image_views(logical_device, self.surface_format, images)?;
+        Ok(image_views)
     }
 }
 
