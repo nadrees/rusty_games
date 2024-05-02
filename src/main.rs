@@ -4,17 +4,16 @@ use anyhow::{anyhow, Result};
 use ash::{
     ext::debug_utils,
     vk::{
-        ClearColorValue, ClearValue, CommandBuffer, CommandBufferAllocateInfo,
-        CommandBufferBeginInfo, CommandBufferLevel, CommandBufferResetFlags, CommandPool,
-        CommandPoolCreateFlags, CommandPoolCreateInfo, DebugUtilsMessengerEXT, Fence,
-        FenceCreateFlags, FenceCreateInfo, PipelineBindPoint, PipelineStageFlags, PresentInfoKHR,
-        Rect2D, RenderPassBeginInfo, Semaphore, SemaphoreCreateInfo, SubmitInfo, SubpassContents,
+        ClearColorValue, ClearValue, CommandBufferBeginInfo, CommandBufferResetFlags,
+        DebugUtilsMessengerEXT, Fence, FenceCreateFlags, FenceCreateInfo, PipelineBindPoint,
+        PipelineStageFlags, PresentInfoKHR, Rect2D, RenderPassBeginInfo, Semaphore,
+        SemaphoreCreateInfo, SubmitInfo, SubpassContents,
     },
     Device, Entry,
 };
 use rusty_games::{
-    get_debug_messenger_create_info, init_logging, GraphicsPipeline, Instance, LogicalDevice,
-    PhysicalDeviceSurface, Surface, Swapchain,
+    get_debug_messenger_create_info, init_logging, CommandPool, GraphicsPipeline, Instance,
+    LogicalDevice, PhysicalDeviceSurface, Surface, Swapchain,
 };
 use tracing::info;
 use winit::{
@@ -57,8 +56,6 @@ struct App {
     /// Command pool responsible for managing memory and creating
     /// command buffers
     command_pool: CommandPool,
-    /// The command buffer to submit draw commands to
-    command_buffer: CommandBuffer,
     /// Semaphore for when the image is available to be used from the
     /// swapchain
     image_available_semaphore: Semaphore,
@@ -91,8 +88,7 @@ impl App {
         let pipeline = GraphicsPipeline::new(&logical_device, &swapchain)?;
 
         // configure command buffers
-        let command_pool = Self::create_command_pool(&logical_device)?;
-        let command_buffer = Self::create_command_buffer(&logical_device, &command_pool)?;
+        let command_pool = CommandPool::new(&logical_device)?;
         let (image_available_semaphore, render_finished_semaphore, in_flight_fence) =
             Self::create_sync_object(&&logical_device)?;
 
@@ -102,7 +98,6 @@ impl App {
             swapchain,
             pipeline,
             command_pool,
-            command_buffer,
             image_available_semaphore,
             render_finished_semaphore,
             in_flight_fence,
@@ -143,9 +138,11 @@ impl App {
             .swapchain
             .acquire_next_image_index(&self.image_available_semaphore)?;
 
+        let command_buffer = *self.command_pool.get_command_buffer();
+
         unsafe {
             self.device
-                .reset_command_buffer(self.command_buffer, CommandBufferResetFlags::empty())?
+                .reset_command_buffer(command_buffer, CommandBufferResetFlags::empty())?
         }
 
         self.record_command_buffer(image_index as usize)?;
@@ -153,7 +150,7 @@ impl App {
         let wait_semaphores = [self.image_available_semaphore];
         let signal_semaphores = [self.render_finished_semaphore];
         let pipeline_stage_flags = [PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let command_buffers = [self.command_buffer];
+        let command_buffers = [command_buffer];
         let submit_info = [SubmitInfo::default()
             .wait_semaphores(&wait_semaphores)
             .wait_dst_stage_mask(&pipeline_stage_flags)
@@ -183,10 +180,12 @@ impl App {
 
     /// Records the command buffer for execution
     fn record_command_buffer(&self, image_index: usize) -> Result<()> {
+        let command_buffer = *self.command_pool.get_command_buffer();
+
         let command_buffer_begin_info = CommandBufferBeginInfo::default();
         unsafe {
             self.device
-                .begin_command_buffer(self.command_buffer, &command_buffer_begin_info)?
+                .begin_command_buffer(command_buffer, &command_buffer_begin_info)?
         };
 
         let swapchain_extent = self.swapchain.get_extent();
@@ -205,18 +204,18 @@ impl App {
             .clear_values(&clear_values);
         unsafe {
             self.device.cmd_begin_render_pass(
-                self.command_buffer,
+                command_buffer,
                 &render_pass_begin_info,
                 SubpassContents::INLINE,
             );
             self.device.cmd_bind_pipeline(
-                self.command_buffer,
+                command_buffer,
                 PipelineBindPoint::GRAPHICS,
                 *self.pipeline,
             );
-            self.device.cmd_draw(self.command_buffer, 3, 1, 0, 0);
-            self.device.cmd_end_render_pass(self.command_buffer);
-            self.device.end_command_buffer(self.command_buffer)?;
+            self.device.cmd_draw(command_buffer, 3, 1, 0, 0);
+            self.device.cmd_end_render_pass(command_buffer);
+            self.device.end_command_buffer(command_buffer)?;
         };
 
         Ok(())
@@ -249,32 +248,6 @@ impl App {
             render_finished_semaphore,
             in_flight_fence,
         ))
-    }
-
-    /// Allocates the command buffer from the command pool
-    fn create_command_buffer(
-        logical_device: &Device,
-        command_pool: &CommandPool,
-    ) -> Result<CommandBuffer> {
-        let allocate_info = CommandBufferAllocateInfo::default()
-            .command_pool(*command_pool)
-            .level(CommandBufferLevel::PRIMARY)
-            .command_buffer_count(1);
-
-        let command_buffers = unsafe { logical_device.allocate_command_buffers(&allocate_info)? };
-        Ok(command_buffers[0])
-    }
-
-    /// Creates a command pool for getting the command buffers from
-    fn create_command_pool(logical_device: &LogicalDevice) -> Result<CommandPool> {
-        let queue_family_indicies = logical_device.get_queue_family_indicies();
-
-        let create_command_pool = CommandPoolCreateInfo::default()
-            .flags(CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-            .queue_family_index(queue_family_indicies.graphics_family.unwrap() as u32);
-        let command_pool =
-            unsafe { logical_device.create_command_pool(&create_command_pool, None)? };
-        Ok(command_pool)
     }
 
     /// Queries the system for the available physical devices, and picks the most appropriate one for use.
@@ -329,7 +302,6 @@ impl Drop for App {
             self.device
                 .destroy_semaphore(self.render_finished_semaphore, None);
             self.device.destroy_fence(self.in_flight_fence, None);
-            self.device.destroy_command_pool(self.command_pool, None);
         }
     }
 }

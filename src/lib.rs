@@ -1,3 +1,4 @@
+mod command_pool;
 mod graphics_pipeline;
 mod image_view;
 mod instance;
@@ -14,6 +15,7 @@ use ash::vk::{
     Bool32, DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT,
     DebugUtilsMessengerCallbackDataEXT, DebugUtilsMessengerCreateInfoEXT, KHR_SWAPCHAIN_NAME,
 };
+pub use command_pool::CommandPool;
 pub use graphics_pipeline::GraphicsPipeline;
 pub use image_view::ImageView;
 pub use instance::Instance;
