@@ -1,16 +1,7 @@
 use std::{ffi::CStr, rc::Rc};
 
 use anyhow::{anyhow, Result};
-use ash::{
-    ext::debug_utils,
-    vk::{
-        ClearColorValue, ClearValue, CommandBufferBeginInfo, CommandBufferResetFlags,
-        DebugUtilsMessengerEXT, Fence, FenceCreateFlags, FenceCreateInfo, PipelineBindPoint,
-        PipelineStageFlags, PresentInfoKHR, Rect2D, RenderPassBeginInfo, Semaphore,
-        SemaphoreCreateInfo, SubmitInfo, SubpassContents,
-    },
-    Device, Entry,
-};
+use ash::{ext::debug_utils, vk::DebugUtilsMessengerEXT, Entry};
 use rusty_games::{
     get_debug_messenger_create_info, init_logging, CommandPool, GraphicsPipeline, Instance,
     LogicalDevice, PhysicalDeviceSurface, Surface, Swapchain,
@@ -51,18 +42,9 @@ struct App {
     debug_utils: Option<DebugUtilsExt>,
     /// See swapchain manager struct docs
     swapchain: Swapchain,
-    /// The graphics pipeline itself
-    pipeline: GraphicsPipeline,
     /// Command pool responsible for managing memory and creating
     /// command buffers
     command_pool: CommandPool,
-    /// Semaphore for when the image is available to be used from the
-    /// swapchain
-    image_available_semaphore: Semaphore,
-    /// Semaphore for when the rendering has finished
-    render_finished_semaphore: Semaphore,
-    /// Fence for synchronizing render passes
-    in_flight_fence: Fence,
 }
 
 impl App {
@@ -88,19 +70,13 @@ impl App {
         let pipeline = GraphicsPipeline::new(&logical_device, &swapchain)?;
 
         // configure command buffers
-        let command_pool = CommandPool::new(&logical_device)?;
-        let (image_available_semaphore, render_finished_semaphore, in_flight_fence) =
-            Self::create_sync_object(&&logical_device)?;
+        let command_pool = CommandPool::new(&logical_device, pipeline)?;
 
         Ok(Self {
             debug_utils,
             device: logical_device,
             swapchain,
-            pipeline,
             command_pool,
-            image_available_semaphore,
-            render_finished_semaphore,
-            in_flight_fence,
         })
     }
 
@@ -125,100 +101,9 @@ impl App {
         Ok(())
     }
 
-    fn draw_frame(&self) -> Result<()> {
-        let fences = [self.in_flight_fence];
-        unsafe {
-            // wait for previous draw to complete
-            self.device.wait_for_fences(&fences, true, u64::MAX)?;
-            // reset the fence so that it can be re-signaled when this draw is complete
-            self.device.reset_fences(&fences)?;
-        }
-
-        let image_index = self
-            .swapchain
-            .acquire_next_image_index(&self.image_available_semaphore)?;
-
-        let command_buffer = *self.command_pool.get_command_buffer();
-
-        unsafe {
-            self.device
-                .reset_command_buffer(command_buffer, CommandBufferResetFlags::empty())?
-        }
-
-        self.record_command_buffer(image_index as usize)?;
-
-        let wait_semaphores = [self.image_available_semaphore];
-        let signal_semaphores = [self.render_finished_semaphore];
-        let pipeline_stage_flags = [PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let command_buffers = [command_buffer];
-        let submit_info = [SubmitInfo::default()
-            .wait_semaphores(&wait_semaphores)
-            .wait_dst_stage_mask(&pipeline_stage_flags)
-            .command_buffers(&command_buffers)
-            .signal_semaphores(&signal_semaphores)];
-        unsafe {
-            self.device.queue_submit(
-                self.device.get_queues().graphics,
-                &submit_info,
-                self.in_flight_fence,
-            )?
-        }
-
-        let swapchains = [*self.swapchain.get_handle()];
-        let image_indicies = [image_index];
-        let present_info = PresentInfoKHR::default()
-            .wait_semaphores(&signal_semaphores)
-            .swapchains(&swapchains)
-            .image_indices(&image_indicies);
-        unsafe {
-            self.swapchain
-                .queue_present(self.device.get_queues().present, &present_info)?
-        };
-
-        Ok(())
-    }
-
-    /// Records the command buffer for execution
-    fn record_command_buffer(&self, image_index: usize) -> Result<()> {
-        let command_buffer = *self.command_pool.get_command_buffer();
-
-        let command_buffer_begin_info = CommandBufferBeginInfo::default();
-        unsafe {
-            self.device
-                .begin_command_buffer(command_buffer, &command_buffer_begin_info)?
-        };
-
-        let swapchain_extent = self.swapchain.get_extent();
-        let render_area = Rect2D::default().extent(*swapchain_extent);
-
-        let mut clear_value = ClearValue::default();
-        clear_value.color = ClearColorValue {
-            uint32: [0, 0, 0, 1],
-        };
-        let clear_values = [clear_value];
-
-        let render_pass_begin_info = RenderPassBeginInfo::default()
-            .render_pass(**self.pipeline.get_render_pass())
-            .framebuffer(**self.pipeline.get_framebuffer_for_index(image_index))
-            .render_area(render_area)
-            .clear_values(&clear_values);
-        unsafe {
-            self.device.cmd_begin_render_pass(
-                command_buffer,
-                &render_pass_begin_info,
-                SubpassContents::INLINE,
-            );
-            self.device.cmd_bind_pipeline(
-                command_buffer,
-                PipelineBindPoint::GRAPHICS,
-                *self.pipeline,
-            );
-            self.device.cmd_draw(command_buffer, 3, 1, 0, 0);
-            self.device.cmd_end_render_pass(command_buffer);
-            self.device.end_command_buffer(command_buffer)?;
-        };
-
-        Ok(())
+    fn draw_frame(&mut self) -> Result<()> {
+        let frame = self.command_pool.get_next_frame();
+        frame.render(&self.swapchain)
     }
 
     /// Creates the window that will interact with the OS to draw the results on the screen
@@ -231,23 +116,6 @@ impl App {
             .with_title(WINDOW_TITLE)
             .build(&event_loop)?;
         Ok(window)
-    }
-
-    fn create_sync_object(logical_device: &Device) -> Result<(Semaphore, Semaphore, Fence)> {
-        let semaphore_create_info = SemaphoreCreateInfo::default();
-        let fence_create_info = FenceCreateInfo::default().flags(FenceCreateFlags::SIGNALED);
-
-        let image_availabe_semaphore =
-            unsafe { logical_device.create_semaphore(&semaphore_create_info, None)? };
-        let render_finished_semaphore =
-            unsafe { logical_device.create_semaphore(&semaphore_create_info, None)? };
-        let in_flight_fence = unsafe { logical_device.create_fence(&fence_create_info, None)? };
-
-        Ok((
-            image_availabe_semaphore,
-            render_finished_semaphore,
-            in_flight_fence,
-        ))
     }
 
     /// Queries the system for the available physical devices, and picks the most appropriate one for use.
@@ -294,14 +162,6 @@ impl Drop for App {
                     .debug_utils
                     .destroy_debug_utils_messenger(debug_utils.extension, None)
             };
-        }
-
-        unsafe {
-            self.device
-                .destroy_semaphore(self.image_available_semaphore, None);
-            self.device
-                .destroy_semaphore(self.render_finished_semaphore, None);
-            self.device.destroy_fence(self.in_flight_fence, None);
         }
     }
 }

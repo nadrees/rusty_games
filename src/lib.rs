@@ -1,4 +1,5 @@
 mod command_pool;
+mod frame;
 mod graphics_pipeline;
 mod image_view;
 mod instance;
