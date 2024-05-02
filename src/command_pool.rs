@@ -15,7 +15,7 @@ pub struct CommandPool {
     logical_device: Rc<LogicalDevice>,
 }
 
-const FRAMES_IN_FLIGHT: u32 = 1;
+const FRAMES_IN_FLIGHT: u32 = 2;
 
 impl CommandPool {
     pub fn new(
